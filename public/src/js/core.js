@@ -2073,6 +2073,7 @@ class DpsApp {
     this.deviceDropdownBtn = document.querySelector(".deviceDropdownBtn");
     this.deviceDropdownMenu = document.querySelector(".deviceDropdownMenu");
     this.characterNameInput = document.querySelector(".characterNameInput");
+    this.routerCaptureInput = document.querySelector(".routerCaptureInput");
     this.showSuspendBtnCheckbox = document.querySelector(".showSuspendBtnCheckbox");
     this.bossLogsCheckbox = document.querySelector(".bossLogsCheckbox");
     this.debugLoggingCheckbox = document.querySelector(".debugLoggingCheckbox");
@@ -2252,6 +2253,27 @@ class DpsApp {
           window.javaBridge?.bindLocalNickname?.(value, this.USER_NAME);
         }
         this.setUserName(this.USER_NAME, { persist: true, syncBackend: true });
+      });
+    }
+
+    if (this.routerCaptureInput) {
+      // Applied when the field is left or Enter is pressed, not per keystroke:
+      // every change reconnects to the router.
+      let savedRouter = String(this.safeGetSetting("capture.router") || "").trim();
+      this.routerCaptureInput.value = savedRouter;
+      this.routerCaptureInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") event.target.blur();
+      });
+      this.routerCaptureInput.addEventListener("change", (event) => {
+        const value = String(event.target?.value || "").trim();
+        event.target.value = value;
+        if (value === savedRouter) return;
+        savedRouter = value;
+        const applied = window.javaBridge?.setRouterCapture?.(value);
+        Promise.resolve(applied).finally(() => {
+          this.refreshConnectionInfo();
+          if (!this._autoDetectDevice) this._loadDeviceDropdown();
+        });
       });
     }
 

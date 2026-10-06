@@ -431,6 +431,18 @@
                     </div>
                   </div>
                 </div>
+                <div class="settingsRow settingsRowInput settingsRowStacked">
+                  <div class="settingsInfo">
+                    <label class="settingsLabel" for="routerCaptureInput" data-i18n="settings.router.label">Capture on router</label>
+                    <div class="settingsHint" data-i18n="settings.router.hint">An OpenWrt router's SSH address, to capture there instead of on this PC. Leave empty to capture here.</div>
+                  </div>
+                  <input
+                    id="routerCaptureInput"
+                    class="routerCaptureInput"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="root@192.168.1.1" />
+                </div>
                 <div class="settingsRow settingsRowStacked">
                   <div class="settingsInfo">
                     <div class="settingsLabel" data-i18n="settings.lockedPort">Detected device/port</div>

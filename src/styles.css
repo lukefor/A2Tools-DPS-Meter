@@ -1409,7 +1409,8 @@ body.mainPlayerDpsBold .meter .item .content .dps > p {
   min-width: 0;
 }
 .settingsPanel .characterNameInput,
-.settingsPanel .localActorIdInput {
+.settingsPanel .localActorIdInput,
+.settingsPanel .routerCaptureInput {
   height: var(--set-field-h);
   box-sizing: border-box;
   padding: 0 8px;
@@ -1424,18 +1425,25 @@ body.mainPlayerDpsBold .meter .item .content .dps > p {
   max-width: 180px;
   font-family: var(--hud-ident);
 }
+.settingsPanel .routerCaptureInput {
+  flex: 1 1 auto;
+  width: 100%;
+  font-family: var(--hud-tech);
+}
 .settingsPanel .localActorIdInput {
   width: 76px;
   font-family: var(--hud-tech);
   font-variant-numeric: tabular-nums;
 }
 .settingsPanel .characterNameInput:focus,
-.settingsPanel .localActorIdInput:focus {
+.settingsPanel .localActorIdInput:focus,
+.settingsPanel .routerCaptureInput:focus {
   outline: none;
   border-color: var(--isUser-fill);
 }
 .settingsPanel .characterNameInput::placeholder,
-.settingsPanel .localActorIdInput::placeholder {
+.settingsPanel .localActorIdInput::placeholder,
+.settingsPanel .routerCaptureInput::placeholder {
   color: var(--hud-faint);
 }
 .settingsPanel .settingsActorInline {

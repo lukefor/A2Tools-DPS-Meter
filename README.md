@@ -33,6 +33,8 @@ Real-time DPS meter overlay for AION 2. Captures game network packets to display
 
 On **Linux** (playing through Proton), see the **[Linux guide](docs/linux.md)** instead.
 
+Rather not install Npcap on the gaming PC? With an **OpenWrt router**, the meter can capture there instead: see **[Capturing on a router](docs/router-capture.md)**.
+
 ## Installation
 
 1. Install [Npcap](https://npcap.com) with WinPcap API-compatible mode enabled

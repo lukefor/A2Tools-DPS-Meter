@@ -515,6 +515,15 @@
         return d;
       });
     },
+    // Capture on the router at this ssh destination, or here when empty.
+    // Takes effect at once; the device list changes with it.
+    setRouterCapture(ssh) {
+      const value = String(ssh || "").trim();
+      settingsCache["capture.router"] = value;
+      localStorage.setItem("capture.router", value);
+      window._cachedDevices = null;
+      return invoke("set_router_capture", { ssh: value }).catch(() => false);
+    },
     setManualDevice(device) {
       invoke("set_manual_device", { device: device || "" }).catch(() => {});
     },

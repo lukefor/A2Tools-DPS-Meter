@@ -473,7 +473,7 @@ fn guess_link_header_len(frame: &[u8]) -> Option<usize> {
 
 /// Parse raw captured frame to extract TCP payload. The link type says where
 /// IPv4 starts; when it does not fit, the frame-only guess gets a chance.
-fn parse_tcp_payload(frame: &[u8], link_type: c_int, device_name: &str) -> Option<CapturedPayload> {
+pub(crate) fn parse_tcp_payload(frame: &[u8], link_type: c_int, device_name: &str) -> Option<CapturedPayload> {
     if frame.len() < 4 {
         return None;
     }
