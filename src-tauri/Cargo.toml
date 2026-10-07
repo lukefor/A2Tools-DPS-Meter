@@ -35,7 +35,6 @@ desktop = [
     "dep:futures-util",
     "dep:urlencoding",
     "dep:flate2",
-    "dep:discord-rich-presence",
     # Linux only (see the target section below); ignored elsewhere.
     "dep:secret-service",
     "dep:gtk",
@@ -91,9 +90,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 chrono = { version = "0.4", features = ["serde"] }
 parking_lot = "0.12"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"], optional = true }
-# Discord activity ("playing AION2 as a level 29 Cleric on Kaisinel"), over the
-# local Discord client's IPC socket. Opt-in; see presence.rs.
-discord-rich-presence = { version = "1.1", optional = true }
 futures-util = { version = "0.3", optional = true }
 urlencoding = { version = "2", optional = true }
 sha2 = "0.11.0"

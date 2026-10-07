@@ -66,8 +66,6 @@ class DpsApp {
       bossLogs: "dpsMeter.bossLogsEnabled",
       saveRawPackets: "dpsMeter.saveRawPackets",
       autoUpload: "dpsMeter.autoUpload",
-      discordActivity: "dpsMeter.discordActivity",
-      discordPromoShown: "dpsMeter.discordPromoShown",
       accountPromoShown: "dpsMeter.accountPromoShown",
       windowOpacity: "dpsMeter.windowOpacity",
       bossNameSize: "dpsMeter.bossNameSize",
@@ -491,7 +489,6 @@ class DpsApp {
     });
     // Settings, Details and History run this same bundle; only the overlay
     // checks, or every Settings open would ask again.
-    if (window.A2_VIEW === "main") window.ReleaseChecker?.start?.();
     this.setupConsoleDebugging();
     this.bindNativeHotkeyBridge();
 
@@ -2103,7 +2100,6 @@ class DpsApp {
     this.bossNameSizeValue = document.querySelector(".bossNameSizeValue");
     this.windowOpacityInput = document.querySelector(".windowOpacityInput");
     this.windowOpacityValue = document.querySelector(".windowOpacityValue");
-    this.discordButton = document.querySelector(".discordButton");
     this.supportWidget = document.querySelector(".supportWidget");
     this.supportButton = document.querySelector(".supportButton");
     this.supportModal = document.querySelector("#supportModal");
@@ -2423,25 +2419,7 @@ class DpsApp {
     }
     this.refreshAccountPanel();
 
-    // Off unless turned on: it shows others what you are playing. Offered
-    // only when this build has a Discord application to show it under.
-    const discordCheckbox = document.querySelector(".discordActivityCheckbox");
-    if (discordCheckbox) {
-      discordCheckbox.checked = this.safeGetSetting(this.storageKeys.discordActivity) === "true";
-      discordCheckbox.addEventListener("change", (event) => {
-        this.safeSetSetting(this.storageKeys.discordActivity, String(!!event.target?.checked));
-      });
-    }
-    Promise.resolve(window.javaBridge?.discordActivityAvailable?.())
-      .catch(() => false)
-      .then((ok) => {
-        const group = document.querySelector(".discordActivityGroup");
-        if (group && ok) group.style.display = "";
-        if (window.A2_VIEW !== "main") return;
-        // At most one offer per launch: the account one waits for a launch
-        // where the Discord one does not open.
-        if (!(ok && this.maybeShowDiscordPromo())) this.maybeShowAccountPromo();
-      });
+    if (window.A2_VIEW === "main") this.maybeShowAccountPromo();
 
     if (this.autoUploadCheckbox) {
       // Off unless turned on: an upload publishes a fight.
@@ -2625,10 +2603,6 @@ class DpsApp {
 
     document.querySelector(".resetAllSettingsBtn")?.addEventListener("click", () => {
       this.resetAllSettings();
-    });
-
-    this.discordButton?.addEventListener("click", () => {
-      window.javaBridge?.openBrowser?.("https://discord.gg/Aion2Global");
     });
 
     this.supportButton?.addEventListener("click", () => {
@@ -5150,53 +5124,6 @@ class DpsApp {
       this.suspendBtn.replaceChildren(newIcon);
     }
     window.lucide?.createIcons?.({ root: this.suspendBtn });
-  }
-
-  // A one-time popup offering Discord activity, with the toggle already on.
-  // Done keeps what the toggle says; closing it any other way (×, Escape, a
-  // click outside) leaves it off. Not shown to anyone who has already chosen
-  // either way in Settings, and never again once answered. True if it opens.
-  maybeShowDiscordPromo() {
-    const promo = document.querySelector("#discordPromo");
-    if (!promo) return false;
-    if (this.safeGetSetting(this.storageKeys.discordPromoShown) === "true") return false;
-    const current = this.safeGetSetting(this.storageKeys.discordActivity);
-    if (current === "true" || current === "false") return false;
-
-    const checkbox = promo.querySelector(".discordPromoCheckbox");
-    let answered = false;
-    const onKey = (event) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        answer(false);
-      }
-    };
-    const answer = (enabled) => {
-      if (answered) return;
-      answered = true;
-      this.safeSetSetting(this.storageKeys.discordActivity, String(enabled));
-      this.safeSetSetting(this.storageKeys.discordPromoShown, "true");
-      const settingsCheckbox = document.querySelector(".discordActivityCheckbox");
-      if (settingsCheckbox) settingsCheckbox.checked = enabled;
-      promo.classList.remove("isOpen");
-      promo.setAttribute("aria-hidden", "true");
-      document.removeEventListener("keydown", onKey, true);
-    };
-    promo.querySelector(".discordPromoDone")?.addEventListener("click", () => answer(!!checkbox?.checked));
-    promo.querySelector(".discordPromoClose")?.addEventListener("click", () => answer(false));
-    promo.addEventListener("click", (event) => {
-      if (event.target === promo) answer(false);
-    });
-
-    // A moment after start, so it does not land on top of the first paint.
-    setTimeout(() => {
-      if (answered) return;
-      if (checkbox) checkbox.checked = true;
-      promo.classList.add("isOpen");
-      promo.setAttribute("aria-hidden", "false");
-      document.addEventListener("keydown", onKey, true);
-    }, 2500);
-    return true;
   }
 
   // A one-time popup offering an a2tools.app account, with automatic upload

@@ -12,6 +12,5 @@ pub mod process;
 pub mod screen;
 pub mod secret;
 pub mod shell;
-pub mod updater;
 pub mod window;
 pub mod window_detector;

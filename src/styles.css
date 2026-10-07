@@ -1869,7 +1869,6 @@ body.mainPlayerNamesBold .settingsPanel .themeDropdownMenu .settingsDropdownItem
 
 /* One geometry for the three outbound links; only the fill tells them
    apart, and none of them is louder than the panel it sits in. */
-.settingsPanel .discordButton,
 .settingsPanel .supportButton,
 .settingsPanel .a2toolsButton,
 .settingsPanel .quitButton {
@@ -1890,9 +1889,6 @@ body.mainPlayerNamesBold .settingsPanel .themeDropdownMenu .settingsDropdownItem
   cursor: pointer;
   transition: filter 120ms ease, background 120ms ease, border-color 120ms ease;
 }
-.settingsPanel .discordButton {
-  background: #5865f2;
-}
 .settingsPanel .supportButton {
   background: linear-gradient(90deg, #7f5fe8, #6f4cd8);
 }
@@ -1901,23 +1897,16 @@ body.mainPlayerNamesBold .settingsPanel .themeDropdownMenu .settingsDropdownItem
   background-size: 300% 300%;
   animation: a2toolsShimmer 6s ease infinite;
 }
-.settingsPanel .discordButton:hover,
 .settingsPanel .supportButton:hover,
 .settingsPanel .a2toolsButton:hover {
   filter: brightness(1.12);
 }
-.settingsPanel .discordButton .discordIcon,
 .settingsPanel .supportButton .supportIcon {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
   width: 15px;
   height: 15px;
-}
-.settingsPanel .discordButton .discordIcon svg {
-  width: 100%;
-  height: 100%;
-  fill: currentColor;
 }
 .settingsPanel .supportButton .supportIcon svg {
   width: 100%;
@@ -3081,101 +3070,6 @@ body.legacyUi .meter .item .content .name.isSupporter,
   }
 }
 
-.updateModal {
-  position: fixed;
-  inset: 0;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  z-index: 999999;
-  &.isOpen {
-    display: flex;
-  }
-
-  .updateModalCard {
-    width: 360px;
-    border-radius: 24px;
-    background: rgb(12, 22, 40);
-    padding: 24px;
-    font-weight: bold;
-    color: white;
-    .updateModalTitle {
-      font-size: 24px;
-    }
-    .updateModalText {
-      margin: 24px 0;
-      white-space: pre-line;
-    }
-    .updateModalActions {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-    .updateModalBtn {
-      border: none;
-      font-size: 18px;
-      font-weight: bold;
-      border-radius: 8px;
-      padding: 8px;
-      width: 100%;
-      cursor: pointer;
-      color: white;
-      text-shadow: var(--text-shadow);
-    }
-    .updateModalBtn.updateInstallBtn {
-      background: #4caf50;
-    }
-    .updateModalBtn.updateNotesBtn {
-      background: #2196f3;
-    }
-    .updateModalBtn.updateManualBtn {
-      background: #78909c;
-    }
-    .updateModalBtn.updateLaterBtn {
-      background: #ff9800;
-    }
-    .updateProgress {
-      margin-top: 16px;
-      text-align: center;
-    }
-    .updateProgressTrack {
-      width: 100%;
-      height: 8px;
-      background: rgba(255,255,255,0.15);
-      border-radius: 4px;
-      overflow: hidden;
-    }
-    .updateProgressBar {
-      height: 100%;
-      width: 0%;
-      background: #4caf50;
-      border-radius: 4px;
-      transition: width 0.2s;
-    }
-    .updateProgressText {
-      margin-top: 8px;
-      font-size: 14px;
-      color: rgba(255,255,255,0.8);
-    }
-    .updateProgressActions {
-      display: flex;
-      gap: 10px;
-      margin-top: 12px;
-    }
-    .updateProgressActions .updateModalBtn {
-      flex: 1;
-    }
-    .updateModalBtn.updateCancelBtn {
-      background: #ff5252;
-    }
-    .updateStatusText {
-      margin-top: 16px;
-      text-align: center;
-      font-size: 14px;
-    }
-  }
-}
-
 /* Compatibility: flatten nested rules for environments without CSS nesting support. */
 
 
@@ -4118,92 +4012,7 @@ body.legacyUi .meter .item .content .name.isSupporter,
   flex-shrink: 0;
 }
 
-.updateModal.isOpen {
-  display: flex;
-}
-.updateModal .updateModalCard {
-  width: 360px;
-  border-radius: 24px;
-  background: rgb(12, 22, 40);
-  padding: 24px;
-  font-weight: bold;
-  color: white;
-}
-.updateModal .updateModalCard .updateModalTitle {
-  font-size: 24px;
-}
-.updateModal .updateModalCard .updateModalText {
-  margin: 24px 0;
-  white-space: pre-line;
-}
-.updateModal .updateModalCard .updateModalActions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.updateModal .updateModalCard .updateModalBtn {
-  border: none;
-  font-size: 18px;
-  font-weight: bold;
-  border-radius: 8px;
-  padding: 8px;
-  width: 100%;
-  cursor: pointer;
-  color: white;
-  text-shadow: var(--text-shadow);
-}
-.updateModal .updateModalCard .updateModalBtn.updateInstallBtn {
-  background: #4caf50;
-}
-.updateModal .updateModalCard .updateModalBtn.updateNotesBtn {
-  background: #2196f3;
-}
-.updateModal .updateModalCard .updateModalBtn.updateManualBtn {
-  background: #78909c;
-}
-.updateModal .updateModalCard .updateModalBtn.updateLaterBtn {
-  background: #ff9800;
-}
-.updateModal .updateModalCard .updateModalBtn.updateCancelBtn {
-  background: #ff5252;
-}
-.updateModal .updateModalCard .updateProgress {
-  margin-top: 16px;
-  text-align: center;
-}
-.updateModal .updateModalCard .updateProgressTrack {
-  width: 100%;
-  height: 8px;
-  background: rgba(255,255,255,0.15);
-  border-radius: 4px;
-  overflow: hidden;
-}
-.updateModal .updateModalCard .updateProgressBar {
-  height: 100%;
-  width: 0%;
-  background: #4caf50;
-  border-radius: 4px;
-  transition: width 0.2s;
-}
-.updateModal .updateModalCard .updateProgressText {
-  margin-top: 8px;
-  font-size: 14px;
-  color: rgba(255,255,255,0.8);
-}
-.updateModal .updateModalCard .updateProgressActions {
-  display: flex;
-  gap: 10px;
-  margin-top: 12px;
-}
-.updateModal .updateModalCard .updateProgressActions .updateModalBtn {
-  flex: 1;
-}
-.updateModal .updateModalCard .updateStatusText {
-  margin-top: 16px;
-  text-align: center;
-  font-size: 14px;
-}
-/* One-time Discord activity popup (core.js maybeShowDiscordPromo). */
+/* One-time popup card (core.js maybeShowAccountPromo). */
 .discordPromo {
   display: none;
   position: fixed;
@@ -4293,7 +4102,7 @@ body.legacyUi .meter .item .content .name.isSupporter,
   font-size: 18px;
   line-height: 1;
 }
-/* The account offer borrows the Discord card, in the site's own blue. */
+/* The account offer, in the site's own blue. */
 .accountPromo .accountPromoActions {
   display: flex;
   gap: 10px;
@@ -6772,7 +6581,6 @@ html.detailsWindow .pingDisplay,
 html.detailsWindow .settingsPanel,
 /* History has its own window again, so it never draws over a fight. */
 html.detailsWindow .historyPanel,
-html.detailsWindow .updateModal,
 html.detailsWindow .hoverDetailsTooltip {
   display: none !important;
 }
@@ -6846,7 +6654,6 @@ html.historyWindow .resizeHandle,
 html.historyWindow .pingDisplay,
 html.historyWindow .settingsPanel,
 html.historyWindow .detailsPanel,
-html.historyWindow .updateModal,
 html.historyWindow .hoverDetailsTooltip,
 html.historyWindow .detailsMonitorBadge {
   display: none !important;
@@ -7042,7 +6849,6 @@ html.settingsWindow .resizeHandle,
 html.settingsWindow .pingDisplay,
 html.settingsWindow .detailsPanel,
 html.settingsWindow .historyPanel,
-html.settingsWindow .updateModal,
 html.settingsWindow .hoverDetailsTooltip,
 html.settingsWindow .detailsMonitorBadge {
   display: none !important;
@@ -7117,7 +6923,6 @@ html.settingsWindow .settingsHeader a {
 .settingsPanel,
 .detailsPanel,
 .historyPanel,
-.updateModal,
 .pingDisplay,
 .meter button,
 .meter input,

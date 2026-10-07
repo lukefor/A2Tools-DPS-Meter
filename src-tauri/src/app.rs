@@ -385,13 +385,6 @@ async fn account_status(
     Ok(who)
 }
 
-/// Whether this build can show a Discord activity (it has a Discord
-/// application configured). The Settings toggle is hidden when it cannot.
-#[tauri::command]
-fn discord_activity_available() -> bool {
-    crate::presence::available()
-}
-
 /// What the last `account_status` found, without asking the server again.
 /// `None` when nothing has been checked yet this session.
 #[tauri::command]
@@ -763,177 +756,9 @@ fn write_cached_icon(state: tauri::State<'_, AppState>, key: String, data: Strin
 }
 
 
-#[tauri::command]
-async fn show_update_window(
-    app: tauri::AppHandle,
-    current: String,
-    latest: String,
-    msi_url: String,
-    arch_url: Option<String>,
-    deb_url: Option<String>,
-    rpm_url: Option<String>,
-    msi_sha256: Option<String>,
-    arch_sha256: Option<String>,
-    deb_sha256: Option<String>,
-    rpm_sha256: Option<String>,
-) -> Result<bool, String> {
-    // The manifest names a package per platform (the MSI; the Arch, Debian
-    // and RPM packages). Where this install cannot update itself, or the
-    // manifest has nothing for it, there is nothing to offer.
-    let packages = platform::UpdatePackages {
-        msi: &msi_url,
-        arch: arch_url.as_deref().unwrap_or(""),
-        deb: deb_url.as_deref().unwrap_or(""),
-        rpm: rpm_url.as_deref().unwrap_or(""),
-    };
-    let package_url = platform::updater::package_url(&packages).to_string();
-    // The manifest's SHA-256 for that same package, picked the same way.
-    let hashes = platform::UpdatePackages {
-        msi: msi_sha256.as_deref().unwrap_or(""),
-        arch: arch_sha256.as_deref().unwrap_or(""),
-        deb: deb_sha256.as_deref().unwrap_or(""),
-        rpm: rpm_sha256.as_deref().unwrap_or(""),
-    };
-    let package_sha256 = platform::updater::package_url(&hashes).to_string();
-    if !platform::updater::supported() || package_url.is_empty() {
-        tracing::info!("Update {} available (running {}); this install updates through its package manager", latest, current);
-        return Ok(false);
-    }
-    let msg = format!("A new update is available!\n\nCurrent: {}\nLatest: {}\n\nDownload and install now?", current, latest);
-
-    let accepted = tokio::task::spawn_blocking(move || {
-        platform::dialog::ask_yes_no("A2Tools - Update Available", &msg)
-    }).await.unwrap_or(false);
-
-    if accepted {
-        // Download and install in background
-        let app2 = app.clone();
-        let url = package_url;
-        tauri::async_runtime::spawn(async move {
-            if let Err(e) = download_and_install_update(&app2, &url, &package_sha256).await {
-                tracing::error!("Update download failed: {}", e);
-                // Show error dialog
-                let _ = tokio::task::spawn_blocking(move || {
-                    platform::dialog::show_error(
-                        "A2Tools - Update Error",
-                        &format!("Download failed: {}\n\nPlease download manually.", e),
-                    );
-                }).await;
-            }
-        });
-    }
-
-    Ok(accepted)
-}
-
-/// Whether a downloaded package is the one the manifest names: its SHA-256,
-/// in hex, equals the manifest's. A manifest without a hash matches nothing.
-fn package_hash_matches(expected: &str, actual_hex: &str) -> bool {
-    let expected = expected.trim();
-    expected.len() == 64
-        && expected.bytes().all(|b| b.is_ascii_hexdigit())
-        && expected.eq_ignore_ascii_case(actual_hex)
-}
-
-async fn download_and_install_update(app: &tauri::AppHandle, url: &str, expected_sha256: &str) -> Result<(), String> {
-    use tokio::io::AsyncWriteExt;
-    use futures_util::StreamExt;
-    use sha2::{Digest, Sha256};
-
-    // Only a package the manifest vouches for is installed.
-    if expected_sha256.trim().is_empty() {
-        tracing::warn!("Update manifest has no SHA-256 for {url}; not installing it");
-        return Err("the update manifest has no checksum for this package".into());
-    }
-
-    // Show progress dialog on a blocking thread
-    let app_clone = app.clone();
-    let url_owned = url.to_string();
-
-    let response = app
-        .state::<AppState>()
-        .http
-        .get(&url_owned)
-        .timeout(Duration::from_secs(600))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("HTTP {}", response.status()));
-    }
-    let total_size = response.content_length().unwrap_or(0);
-    let file_name = url_owned.rsplit('/').next().unwrap_or("update");
-    let msi_path = std::env::temp_dir().join(file_name);
-
-    let mut file = tokio::fs::File::create(&msi_path).await.map_err(|e| e.to_string())?;
-    let mut downloaded: u64 = 0;
-    let mut stream = response.bytes_stream();
-    let mut last_pct: u64 = 0;
-    let mut hasher = Sha256::new();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        hasher.update(&chunk);
-        file.write_all(&chunk).await.map_err(|e| e.to_string())?;
-        downloaded += chunk.len() as u64;
-        if total_size > 0 {
-            let pct = (downloaded * 100 / total_size).min(100);
-            if pct != last_pct {
-                last_pct = pct;
-                let _ = app_clone.emit("download-progress", pct);
-                tracing::info!("Download: {}%", pct);
-            }
-        }
-    }
-    file.flush().await.map_err(|e| e.to_string())?;
-    drop(file);
-
-    let actual: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    if !package_hash_matches(expected_sha256, &actual) {
-        let _ = tokio::fs::remove_file(&msi_path).await;
-        tracing::warn!("Update package {} has SHA-256 {actual}, the manifest says {}; deleted, not installed", msi_path.display(), expected_sha256.trim());
-        return Err("the downloaded package does not match the checksum in the update manifest".into());
-    }
-
-    tracing::info!("Download complete, launching installer: {}", msi_path.display());
-
-    // Detect current install directory from the running executable's location
-    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let install_dir = current_exe.parent()
-        .ok_or("Could not determine install directory")?
-        .to_string_lossy()
-        .into_owned();
-    // Strip a trailing backslash so msiexec doesn't interpret \" as an escape
-    let install_dir = install_dir.trim_end_matches('\\').to_string();
-
-    // Launch the installer (msiexec on Windows; see platform::updater).
-    platform::updater::run_installer(&msi_path, &install_dir)?;
-
-    // Give installer time to start, then exit
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    app_clone.exit(0);
-    Ok(())
-}
-
-#[tauri::command]
-async fn fetch_url(state: tauri::State<'_, AppState>, url: String) -> Result<String, String> {
-    state
-        .http
-        .get(&url)
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .text()
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Where the supporter roster lives. The same bucket the installer is served
-/// from, so it costs no new infrastructure and is already cached at the edge.
-const SUPPORTER_ROSTER_URL: &str = "https://cdn.a2tools.app/patrons-v1.bin";
-
-/// A roster placed here overrides the downloaded one.
+/// The supporter roster, when there is one: a local file only. This build
+/// never downloads the published roster, so supporters' names are gold only
+/// when this file is present.
 ///
 /// Build it with `a2t-roster names.txt -o <this path>`. It exists so the gold
 /// name can be exercised before anything is published — otherwise the only way
@@ -947,11 +772,9 @@ const SUPPORTER_ROSTER_URL: &str = "https://cdn.a2tools.app/patrons-v1.bin";
 /// "why is this person gold" report.
 const SUPPORTER_ROSTER_OVERRIDE: &str = "patrons-local.bin";
 
-/// How often to look again. The override is polled quickly so dropping the file
-/// in shows up while you are still looking at the meter; the published roster
-/// changes rarely enough that six hours is generous.
+/// How often to look for the file, so dropping it in shows up while you are
+/// still looking at the meter.
 const ROSTER_POLL_OVERRIDE: Duration = Duration::from_secs(15);
-const ROSTER_POLL_PUBLISHED: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// Read the local override, if one is there.
 fn load_supporter_override(app_data_dir: &std::path::Path) -> Option<crate::supporters::Roster> {
@@ -960,8 +783,7 @@ fn load_supporter_override(app_data_dir: &std::path::Path) -> Option<crate::supp
     match crate::supporters::Roster::parse(&bytes) {
         Some(roster) => {
             tracing::info!(
-                "Supporter roster OVERRIDE in use: {} entries from {} — delete the file to \
-                 go back to the published roster",
+                "Supporter roster in use: {} entries from {}",
                 roster.len(),
                 path.display()
             );
@@ -978,30 +800,6 @@ fn load_supporter_override(app_data_dir: &std::path::Path) -> Option<crate::supp
             None
         }
     }
-}
-
-/// Download and parse the supporter roster.
-///
-/// Every failure is `None` and nobody renders gold. That is deliberate: this is
-/// a cosmetic, and there is no version of "the CDN is down" that should produce
-/// a visible error, a retry storm, or a wrong answer.
-async fn fetch_supporter_roster(client: &reqwest::Client) -> Option<crate::supporters::Roster> {
-    let response = client
-        .get(SUPPORTER_ROSTER_URL)
-        .timeout(Duration::from_secs(30))
-        .send()
-        .await
-        .ok()?;
-    if !response.status().is_success() {
-        return None;
-    }
-    let bytes = response.bytes().await.ok()?;
-    // A roster for ten thousand supporters is about 80 KB; anything far past
-    // that is not one of ours.
-    if bytes.len() > 8 * 1024 * 1024 {
-        return None;
-    }
-    crate::supporters::Roster::parse(&bytes)
 }
 
 #[tauri::command]
@@ -2243,7 +2041,6 @@ pub fn run() {
                 app.state::<AppState>().data_storage
                     .set_before_reset(move || save_fights_before_reset(&handle));
             }
-            crate::presence::spawn(app.handle().clone());
 
             // Reopen the Details window if it was left enabled. Done here rather
             // than from JS because the backend already has settings loaded — the
@@ -2548,59 +2345,27 @@ pub fn run() {
                 }
             });
 
-            // Supporter roster: fetched, never queried. See `crate::supporters`
-            // — asking the server "is this player a supporter?" would hand it a
-            // list of who you play with, every fight, for a cosmetic.
+            // Supporter roster: read from the local file only, never
+            // downloaded (see SUPPORTER_ROSTER_OVERRIDE).
             let handle_roster = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let mut had_override = false;
+                let mut had_roster = false;
                 loop {
-                    let mut wait = ROSTER_POLL_PUBLISHED;
                     if let Some(state) = handle_roster.try_state::<AppState>() {
-                        // The override wins when present, and is re-read every
-                        // pass so editing it takes effect without a restart.
                         match load_supporter_override(&state.app_data_dir) {
                             Some(roster) => {
-                                had_override = true;
-                                wait = ROSTER_POLL_OVERRIDE;
+                                had_roster = true;
                                 state.data_storage.set_supporters(roster);
                             }
-                            None => {
-                                let just_lost_override = had_override;
-                                if had_override {
-                                    tracing::info!("Supporter roster override removed");
-                                    had_override = false;
-                                }
-                                match fetch_supporter_roster(&state.http).await {
-                                    Some(roster) => {
-                                        tracing::info!(
-                                            "Supporter roster: {} entries",
-                                            roster.len()
-                                        );
-                                        state.data_storage.set_supporters(roster);
-                                    }
-                                    None => {
-                                        tracing::debug!("Supporter roster unavailable");
-                                        // Keep looking for the override often, so
-                                        // dropping the file in works on a machine
-                                        // that has never reached the CDN.
-                                        wait = ROSTER_POLL_OVERRIDE;
-                                        // Only wipe the roster if the override we
-                                        // were using has just gone away. Clearing
-                                        // on any failed fetch would mean one CDN
-                                        // hiccup removes every supporter's gold
-                                        // until the next successful poll.
-                                        if just_lost_override {
-                                            state
-                                                .data_storage
-                                                .set_supporters(Default::default());
-                                        }
-                                    }
-                                }
+                            None if had_roster => {
+                                tracing::info!("Supporter roster removed");
+                                had_roster = false;
+                                state.data_storage.set_supporters(Default::default());
                             }
+                            None => {}
                         }
                     }
-                    tokio::time::sleep(wait).await;
+                    tokio::time::sleep(ROSTER_POLL_OVERRIDE).await;
                 }
             });
 
@@ -2621,7 +2386,6 @@ pub fn run() {
             share_status,
             account_status,
             account_status_cached,
-            discord_activity_available,
             account_begin_link,
             account_sign_out,
             get_settings,
@@ -2678,8 +2442,6 @@ pub fn run() {
             set_manual_device,
             replay_file,
             test_auto_hide,
-            fetch_url,
-            show_update_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -2700,16 +2462,6 @@ mod tests {
         });
         assert!(outcome.is_err());
         assert!(InFlight::start("in-flight-test").is_some());
-    }
-
-    #[test]
-    fn only_a_package_with_the_manifest_hash_is_installed() {
-        let actual = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
-        assert!(super::package_hash_matches(actual, actual));
-        assert!(super::package_hash_matches(&format!(" {} ", actual.to_uppercase()), actual));
-        assert!(!super::package_hash_matches(&actual.replace('9', "8"), actual));
-        assert!(!super::package_hash_matches("", actual));
-        assert!(!super::package_hash_matches("9f86d081", "9f86d081"));
     }
 
     #[test]

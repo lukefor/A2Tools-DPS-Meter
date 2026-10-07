@@ -33,7 +33,6 @@ pub mod logging;
 #[cfg(feature = "desktop")]
 pub mod platform;
 #[cfg(feature = "desktop")]
-mod presence;
 #[cfg(feature = "desktop")]
 pub mod share;
 

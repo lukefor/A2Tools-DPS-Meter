@@ -685,13 +685,6 @@
                       <button class="settingsAction settingsActionDanger accountSignOutBtn" type="button" style="display:none" data-i18n="settings.account.signOut">Sign out</button>
                     </div>
                   </div>
-                  <label class="settingsToggle discordActivityGroup" style="display:none" title="While AION2 is open, your Discord status shows your character's name, class, level and server, and the boss you are fighting. It goes through the Discord app on this computer; no account is needed." data-i18n-title="settings.discord.activityHint">
-                    <span class="settingsToggleLabel settingsLabel" data-i18n="settings.discord.activity">Show what I'm playing in Discord</span>
-                    <span class="settingsToggleControl">
-                      <input type="checkbox" class="discordActivityCheckbox" />
-                      <span class="settingsToggleTrack" aria-hidden="true"></span>
-                    </span>
-                  </label>
                   <label class="settingsToggle" title="When a boss fight ends it is uploaded to your account, with the visibility you chose on a2tools.app. Other players stay masked. Training dummies are never uploaded." data-i18n-title="settings.account.autoUploadHint">
                     <span class="settingsToggleLabel settingsLabel" data-i18n="settings.account.autoUpload">Upload boss fights automatically</span>
                     <span class="settingsToggleControl">
@@ -832,14 +825,6 @@
             </section>
             <div class="settingsFooter">
               <div class="settingsFooterLinks">
-                <button class="discordButton" type="button">
-                  <span class="discordIcon" aria-hidden="true">
-                    <svg viewBox="0 0 126.644 96" role="img" focusable="false" aria-hidden="true">
-                      <path d="M81.15,0c-1.2376,2.1973-2.3489,4.4704-3.3591,6.794-9.5975-1.4396-19.3718-1.4396-28.9945,0-.985-2.3236-2.1216-4.5967-3.3591-6.794-9.0166,1.5407-17.8059,4.2431-26.1405,8.0568C2.779,32.5304-1.6914,56.3725.5312,79.8863c9.6732,7.1476,20.5083,12.603,32.0505,16.0884,2.6014-3.4854,4.8998-7.1981,6.8698-11.0623-3.738-1.3891-7.3497-3.1318-10.8098-5.1523.9092-.6567,1.7932-1.3386,2.6519-1.9953,20.281,9.547,43.7696,9.547,64.0758,0,.8587.7072,1.7427,1.3891,2.6519,1.9953-3.4601,2.0457-7.0718,3.7632-10.835,5.1776,1.97,3.8642,4.2683,7.5769,6.8698,11.0623,11.5419-3.4854,22.3769-8.9156,32.0509-16.0631,2.626-27.2771-4.496-50.9172-18.817-71.8548C98.9811,4.2684,90.1918,1.5659,81.1752.0505l-.0252-.0505ZM42.2802,65.4144c-6.2383,0-11.4159-5.6575-11.4159-12.6535s4.9755-12.6788,11.3907-12.6788,11.5169,5.708,11.4159,12.6788c-.101,6.9708-5.026,12.6535-11.3907,12.6535ZM84.3576,65.4144c-6.2637,0-11.3907-5.6575-11.3907-12.6535s4.9755-12.6788,11.3907-12.6788,11.4917,5.708,11.3906,12.6788c-.101,6.9708-5.026,12.6535-11.3906,12.6535Z"/>
-                    </svg>
-                  </span>
-                  <span data-i18n="settings.discord">Discord</span>
-                </button>
                 <button
                   type="button"
                   class="a2toolsButton"
@@ -961,57 +946,6 @@
           overflow-y: auto;
           display: none;
         "></div>
-    </div>
-    <div
-      class="updateModal"
-      id="updateModal">
-      <div class="updateModalCard">
-        <div class="updateModalTitle" data-i18n="update.title">New update available</div>
-        <div
-          class="updateModalText"
-          id="updateModalText"></div>
-        <div class="updateModalActions" id="updateModalActions">
-          <button class="updateModalBtn updateInstallBtn" data-i18n="update.install">Install Now</button>
-          <button class="updateModalBtn updateNotesBtn" data-i18n="update.notes">Release Notes</button>
-          <button class="updateModalBtn updateManualBtn" data-i18n="update.manual">Manual Install</button>
-          <button class="updateModalBtn updateLaterBtn" data-i18n="update.later">Update Later</button>
-        </div>
-        <div class="updateProgress" id="updateProgress" style="display:none">
-          <div class="updateProgressTrack">
-            <div class="updateProgressBar" id="updateProgressBar"></div>
-          </div>
-          <div class="updateProgressText" id="updateProgressText">0%</div>
-          <div class="updateProgressActions">
-            <button class="updateModalBtn updateNotesBtn updateProgressNotesBtn" data-i18n="update.notes">Release Notes</button>
-            <button class="updateModalBtn updateCancelBtn" data-i18n="update.cancel">Cancel</button>
-          </div>
-        </div>
-        <div class="updateStatusText" id="updateStatusText" style="display:none"></div>
-      </div>
-    </div>
-    <div class="discordPromo" id="discordPromo" aria-hidden="true">
-      <div
-        class="discordPromoCard"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="discordPromoTitle">
-        <button
-          class="discordPromoClose"
-          type="button"
-          data-i18n-aria-label="discordPromo.close"
-          aria-label="Close">
-          ×
-        </button>
-        <div class="discordPromoTitle" id="discordPromoTitle" data-i18n="discordPromo.title">New: Discord activity</div>
-        <div class="discordPromoText" data-i18n="discordPromo.text">Let friends see your character, class, level and server, and the boss or dungeon you're in, right in your Discord status.</div>
-        <img class="discordPromoPreview" src="./assets/discord-presence.png" alt="" />
-        <label class="discordPromoToggle">
-          <input type="checkbox" class="discordPromoCheckbox" checked />
-          <span data-i18n="settings.discord.activity">Show what I'm playing in Discord</span>
-        </label>
-        <div class="discordPromoHint" data-i18n="discordPromo.hint">Uses the Discord app on this PC; no account needed. You can change this any time in Settings.</div>
-        <button class="discordPromoDone" type="button" data-i18n="discordPromo.done">Done</button>
-      </div>
     </div>
     <div class="discordPromo accountPromo" id="accountPromo" aria-hidden="true">
       <div
@@ -1139,7 +1073,6 @@
     <script src="/src/js/history.js?v=2018a"></script>
 
     <!-- 추가 -->
-    <script src="/src/js/checkRelease.js?v=202b6"></script>
 
     <script src="/src/js/i18n.js"></script>
     <script src="/src/js/core.js?v=2018a"></script>

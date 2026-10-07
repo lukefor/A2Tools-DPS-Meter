@@ -668,9 +668,6 @@
       return invoke("account_status");
     },
 
-    discordActivityAvailable() {
-      return invoke("discord_activity_available");
-    },
 
     // The last check's answer, at once: null if none has run yet, else
     // { who } with who null when signed out.
@@ -752,25 +749,6 @@
       if (!window._iconCache) window._iconCache = {};
       window._iconCache[key] = data;
       invoke("write_cached_icon", { key, data }).catch(() => {});
-    },
-
-    // --- Fetch ---
-    fetchUrlAsync(url, callbackId) {
-      // checkRelease.js registers a callback via window._fetchUrlCallback(id, raw)
-      // Add cache-buster and no-cache headers to avoid stale CDN responses
-      const bustUrl = url + (url.includes("?") ? "&" : "?") + "_t=" + Date.now();
-      fetch(bustUrl, { cache: "no-store" })
-        .then((r) => r.text())
-        .then((text) => {
-          if (callbackId && typeof window._fetchUrlCallback === "function") {
-            window._fetchUrlCallback(callbackId, text);
-          }
-        })
-        .catch(() => {
-          if (callbackId && typeof window._fetchUrlCallback === "function") {
-            window._fetchUrlCallback(callbackId, JSON.stringify({ error: "fetch failed" }));
-          }
-        });
     },
 
     // --- Admin ---
@@ -967,7 +945,7 @@
       document.querySelector(".historyPanel.open")
     );
     const tooltip = fullPanel ? null : document.querySelector(".hoverDetailsTooltip.isVisible");
-    // The one-time Discord popup needs room for its card, no more: a
+    // The one-time account popup needs room for its card, no more: a
     // full-panel window would block clicks on the game around it.
     const promoOpen = !fullPanel && !!document.querySelector(".discordPromo.isOpen");
 
