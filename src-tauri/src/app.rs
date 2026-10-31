@@ -4146,6 +4146,8 @@ pub fn run() {
                 // The other windows hidden with the meter (auto-hide), and how
                 // many ticks nothing of ours or the game has been in front.
                 let mut hidden_with_meter: std::collections::HashSet<String> = Default::default();
+                // The plugin dock's always-on-top as last set (see below).
+                let mut dock_on_top: Option<bool> = None;
                 let mut others_delay: u32 = 0;
                 let mut last_odyle: Option<((u32, u32), Option<String>)> = None;
                 loop {
@@ -4305,6 +4307,23 @@ pub fn run() {
                         } else if !hidden_with_meter.is_empty() {
                             // Auto-hide turned off meanwhile: back.
                             show_with_meter(&handle, &mut hidden_with_meter);
+                        }
+
+                        // The plugin dock is on top only while the game or
+                        // one of the meter's windows is in front: with a
+                        // plugin in it that stays shown, it went on covering
+                        // the browser (2026-10-31). It stays where it is, and
+                        // comes back on top with the game. (On KDE a KWin rule
+                        // keeps plugin windows above, over fullscreen games,
+                        // whatever is asked here.)
+                        if tick_count > 20 {
+                            let front = platform::window::front_is_ours_or_game();
+                            if dock_on_top != Some(front) {
+                                if let Some(dock) = handle.get_webview_window(crate::plugins::dock::LABEL) {
+                                    let _ = dock.set_always_on_top(front);
+                                    dock_on_top = Some(front);
+                                }
+                            }
                         }
 
                         // --- Save window position every ~5 seconds (every 10 ticks) ---
