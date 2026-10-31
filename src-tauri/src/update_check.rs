@@ -17,8 +17,16 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use serde::Deserialize;
 use std::time::Duration;
 
+#[cfg(not(feature = "update-test"))]
 pub const MANIFEST_URL: &str = "https://cdn.a2tools.app/latest-v2.json";
+#[cfg(not(feature = "update-test"))]
 pub const SIGNATURE_URL: &str = "https://cdn.a2tools.app/latest-v2.json.sig";
+/// A build with `update-test` (never shipped) updates from a test manifest,
+/// signed with the same key, to try the updater on an installed build.
+#[cfg(feature = "update-test")]
+pub const MANIFEST_URL: &str = "https://cdn.a2tools.app/test/latest-v2.json";
+#[cfg(feature = "update-test")]
+pub const SIGNATURE_URL: &str = "https://cdn.a2tools.app/test/latest-v2.json.sig";
 /// The last releases' notes for Settings → What's new, made from the GitHub
 /// releases by `tools/changelog.mjs` and signed with the same key.
 pub const CHANGELOG_URL: &str = "https://cdn.a2tools.app/changelog-v2.json";

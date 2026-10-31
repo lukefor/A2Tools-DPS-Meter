@@ -1,6 +1,6 @@
 [package]
 name = "a2tools-dps-meter"
-version = "2.0.86"
+version = "2.0.87"
 description = "A2Tools DPS Meter - AION 2 real-time DPS overlay"
 authors = ["taengu"]
 edition = "2024"
@@ -23,6 +23,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 #
 # is the check that enforces it.
 default = ["desktop", "online"]
+# Never shipped: the updater reads its manifest from test/ on the CDN, to try
+# a release's update path on an installed build (signed and checked as ever).
+update-test = ["online"]
 # Everything that talks to a service outside this computer: the A2 Tools
 # account and uploads, the supporter roster, update checks and the updater,
 # Send Logs to Dev, Discord activity, the OBS stream overlay and the Npcap
