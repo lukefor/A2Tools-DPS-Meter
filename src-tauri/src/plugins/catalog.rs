@@ -56,6 +56,8 @@ fn public_key() -> String {
 /// Largest catalog, and largest plugin (all its files), the meter downloads.
 const MAX_CATALOG: usize = 1024 * 1024;
 const MAX_PLUGIN: usize = 8 * 1024 * 1024;
+/// How long one catalog download may take, the whole body included.
+const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -158,7 +160,9 @@ fn safe_path(path: &str) -> bool {
 }
 
 async fn get(http: &reqwest::Client, url: &str, cap: usize) -> Result<Vec<u8>, String> {
-    let response = http.get(url).send().await.map_err(|e| format!("{url}: {e}"))?;
+    // Its own time limit: the client's 30 s cut off Cooldowns' 5 MB voice
+    // file on a slow connection ("error decoding response body", 2026-10-31).
+    let response = http.get(url).timeout(DOWNLOAD_TIMEOUT).send().await.map_err(|e| format!("{url}: {e}"))?;
     if !response.status().is_success() {
         return Err(format!("{url}: {}", response.status()));
     }
