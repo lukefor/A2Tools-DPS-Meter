@@ -397,7 +397,7 @@
             name: entry.name,
             version: entry.version,
             description: entry.description,
-            controls: [button(t("settings.plugins.install", "Install"), () => install(entry, null), "pluginInstallBtn")],
+            controls: [button(t("settings.plugins.install", "Install"), (e) => install(entry, null, e.currentTarget), "pluginInstallBtn")],
             details,
           }),
         );
@@ -439,10 +439,19 @@
       renderCatalog();
     };
 
+    // The button each install was started from, by plugin id: disabled, it
+    // says Downloading… and then Installing… (the meter's
+    // plugin-install-phase), where a line of text below went unnoticed.
+    const busyButtons = new Map();
+    window.__TAURI__?.window?.getCurrentWindow?.().listen("plugin-install-phase", (e) => {
+      const b = busyButtons.get(e.payload?.id);
+      if (b && e.payload?.phase === "installing") b.textContent = t("settings.plugins.installing", "Installing…");
+    });
+
     // Install a catalog entry, or update to it (`from` is the installed
-    // version). Asks first, listing the permissions: all of them for a new
-    // plugin, only the new ones for an update.
-    const install = async (entry, from) => {
+    // version), from button `btn`. Asks first, listing the permissions: all
+    // of them for a new plugin, only the new ones for an update.
+    const install = async (entry, from, btn) => {
       const isUpdate = !!from;
       const permissions = isUpdate ? available.get(entry.id)?.newPermissions || [] : entry.permissions || [];
       if (!isUpdate || permissions.length) {
@@ -458,7 +467,14 @@
         });
         if (!ok) return;
       }
-      say(t("settings.plugins.installing", "Installing…"), false);
+      const label = btn?.textContent;
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add("pluginBusy");
+        btn.textContent = t("settings.plugins.downloading", "Downloading…");
+        busyButtons.set(entry.id, btn);
+      }
+      say("");
       try {
         const next = await invoke("plugin_install", { id: entry.id });
         if (isUpdate) updatedFrom.set(entry.id, from);
@@ -467,7 +483,14 @@
         say(t("settings.plugins.installDone", "{name} {version} is installed.", { name: entry.name, version: entry.version }), false);
         await loadCatalog();
       } catch (e) {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove("pluginBusy");
+          btn.textContent = label;
+        }
         say(String(e));
+      } finally {
+        busyButtons.delete(entry.id);
       }
     };
 
@@ -511,7 +534,7 @@
         if (newer) {
           controls.push(button(
             t("settings.plugins.updateTo", "Update to {version}", { version: newer.to }),
-            () => install({ id: p.id, name: p.name, version: newer.to }, p.version),
+            (e) => install({ id: p.id, name: p.name, version: newer.to }, p.version, e.currentTarget),
             "hotkeyConsentConfirm pluginInstallBtn",
           ));
         }

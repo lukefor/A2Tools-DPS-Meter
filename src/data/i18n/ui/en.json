@@ -717,6 +717,7 @@
       "install": "Install",
       "update": "Update",
       "updateTo": "Update to {version}",
+      "downloading": "Downloading…",
       "installing": "Installing…",
       "installDone": "{name} {version} is installed.",
       "updatesAvailable": "Updates available: {list}",

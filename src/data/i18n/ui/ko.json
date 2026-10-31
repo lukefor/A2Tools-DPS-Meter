@@ -709,6 +709,7 @@
       "install": "설치",
       "update": "업데이트",
       "updateTo": "{version}(으)로 업데이트",
+      "downloading": "다운로드 중…",
       "installing": "설치 중…",
       "installDone": "{name} {version}이(가) 설치되었습니다.",
       "updatesAvailable": "업데이트 가능: {list}",

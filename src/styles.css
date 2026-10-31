@@ -2347,6 +2347,12 @@ body:not(.noStatColours) .metricMenu:not(.targetMenu) .metricMenuItem.isShown .m
 }
 .settingsPanel .settingsDropdownBtn:focus-visible,
 .settingsPanel .keybindBtn:focus-visible,
+/* A plugin downloading or installing: its button says so, greyed and not
+   clickable until it's done. */
+.settingsPanel .settingsAction.pluginBusy:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
 .settingsPanel .settingsAction:focus-visible,
 .settingsPanel .settingsRange:focus-visible {
   outline: 2px solid var(--settings-accent, var(--isUser-fill));

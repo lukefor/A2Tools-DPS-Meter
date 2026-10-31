@@ -709,6 +709,7 @@
       "install": "安装",
       "update": "更新",
       "updateTo": "更新到 {version}",
+      "downloading": "正在下载…",
       "installing": "正在安装…",
       "installDone": "{name} {version} 已安装。",
       "updatesAvailable": "有可用更新：{list}",

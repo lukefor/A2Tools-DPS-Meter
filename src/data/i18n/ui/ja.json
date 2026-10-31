@@ -709,6 +709,7 @@
       "install": "インストール",
       "update": "更新",
       "updateTo": "{version} に更新",
+      "downloading": "ダウンロード中…",
       "installing": "インストール中…",
       "installDone": "{name} {version} をインストールしました。",
       "updatesAvailable": "アップデートがあります: {list}",

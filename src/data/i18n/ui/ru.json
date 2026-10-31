@@ -709,6 +709,7 @@
       "install": "Установить",
       "update": "Обновить",
       "updateTo": "Обновить до {version}",
+      "downloading": "Загрузка…",
       "installing": "Установка…",
       "installDone": "{name} {version} установлен.",
       "updatesAvailable": "Доступны обновления: {list}",

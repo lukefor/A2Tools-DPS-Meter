@@ -1001,7 +1001,7 @@ async fn repair_held(app: &tauri::AppHandle, host: &Arc<PluginHost>, catalog: &c
         if catalog::newer(&p.version, &entry.version) || (entry.version != p.version && asks_more) {
             continue;
         }
-        match catalog::install(&state.http, entry, &root).await {
+        match catalog::install(&state.http, entry, &root, || {}).await {
             Ok(_) => {
                 tracing::info!("Plugins: {} {} installed again from the catalog", entry.id, entry.version);
                 changed = true;
@@ -1626,7 +1626,11 @@ async fn install_entry(app: &tauri::AppHandle, host: &Arc<PluginHost>, entry: &c
     let http = app.try_state::<AppState>().ok_or("no app state")?.http.clone();
     let dir = plugins_dir(app)?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    catalog::install(&http, entry, &dir).await?;
+    // Settings' button says "Installing…" once the download is done.
+    let phase = || {
+        let _ = app.emit_to("settings", "plugin-install-phase", serde_json::json!({ "id": entry.id, "phase": "installing" }));
+    };
+    catalog::install(&http, entry, &dir, phase).await?;
     tracing::info!("Plugins: installed {} {}", entry.id, entry.version);
     host.reload(app);
     refresh_windows(app, host);

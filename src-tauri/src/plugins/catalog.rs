@@ -56,6 +56,9 @@ fn public_key() -> String {
 /// Largest catalog, and largest plugin (all its files), the meter downloads.
 const MAX_CATALOG: usize = 1024 * 1024;
 const MAX_PLUGIN: usize = 8 * 1024 * 1024;
+/// A plugin's files downloaded at once: one after another, each of its dozen
+/// or two waited out its own round trip first (2026-10-31).
+const PARALLEL_DOWNLOADS: usize = 4;
 /// How long one catalog download may take, the whole body included.
 const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
@@ -264,8 +267,9 @@ fn last_fetched() -> &'static std::sync::Mutex<Option<(std::time::Instant, Catal
 
 /// Download a catalog entry's files into `plugins_dir/<id>`, replacing what
 /// was there. Every file must match its hash in the signed catalog; nothing
-/// is replaced unless all of them do.
-pub async fn install(http: &reqwest::Client, entry: &Entry, plugins_dir: &Path) -> Result<PathBuf, String> {
+/// is replaced unless all of them do. `downloaded` is called once they all
+/// have, as the install itself starts.
+pub async fn install(http: &reqwest::Client, entry: &Entry, plugins_dir: &Path, downloaded: impl Fn()) -> Result<PathBuf, String> {
     if !super::valid_id(&entry.id) {
         return Err(format!("plugin id {:?} is not valid", entry.id));
     }
@@ -275,23 +279,47 @@ pub async fn install(http: &reqwest::Client, entry: &Entry, plugins_dir: &Path) 
     if !entry.files.contains_key("manifest.json") || !entry.files.contains_key("index.html") {
         return Err(format!("{} is missing its manifest or page", entry.name));
     }
+    if let Some(path) = entry.files.keys().find(|path| !safe_path(path)) {
+        return Err(format!("{}: file {path:?} is not allowed", entry.name));
+    }
+    // PARALLEL_DOWNLOADS at a time, each tried a second time if the first
+    // fails (a dropped request no longer fails the update).
+    use futures_util::StreamExt;
+    // Each download owns what it uses (a borrow held across the stream's
+    // awaits doesn't satisfy the spawned task's lifetimes).
+    let jobs: Vec<(String, String, String)> = entry
+        .files
+        .iter()
+        .map(|(path, hash)| (path.clone(), hash.clone(), format!("{}/{}/{}/{path}", base_url(), entry.id, entry.version)))
+        .collect();
+    let results: Vec<Result<(String, Vec<u8>), String>> = futures_util::stream::iter(jobs)
+        .map(|(path, hash, url)| {
+            let (http, name) = (http.clone(), entry.name.clone());
+            async move {
+                let bytes = match get(&http, &url, MAX_PLUGIN).await {
+                    Ok(bytes) => bytes,
+                    Err(_) => get(&http, &url, MAX_PLUGIN).await?,
+                };
+                if !sha256_hex(&bytes).eq_ignore_ascii_case(&hash) {
+                    return Err(format!("{name}: {path} does not match the catalog, not installing"));
+                }
+                Ok((path, bytes))
+            }
+        })
+        .buffer_unordered(PARALLEL_DOWNLOADS)
+        .collect()
+        .await;
     let mut files = Vec::new();
     let mut total = 0;
-    for (path, hash) in &entry.files {
-        if !safe_path(path) {
-            return Err(format!("{}: file {path:?} is not allowed", entry.name));
-        }
-        let url = format!("{}/{}/{}/{path}", base_url(), entry.id, entry.version);
-        let bytes = get(http, &url, MAX_PLUGIN).await?;
+    for result in results {
+        let (path, bytes) = result?;
         total += bytes.len();
         if total > MAX_PLUGIN {
             return Err(format!("{} is larger than {MAX_PLUGIN} bytes", entry.name));
         }
-        if !sha256_hex(&bytes).eq_ignore_ascii_case(hash) {
-            return Err(format!("{}: {path} does not match the catalog, not installing", entry.name));
-        }
-        files.push((path.clone(), bytes));
+        files.push((path, bytes));
     }
+    downloaded();
 
     let staging = plugins_dir.join(format!(".staging-{}", entry.id));
     let target = plugins_dir.join(&entry.id);

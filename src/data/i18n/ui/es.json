@@ -709,6 +709,7 @@
       "install": "Instalar",
       "update": "Actualizar",
       "updateTo": "Actualizar a {version}",
+      "downloading": "Descargando…",
       "installing": "Instalando…",
       "installDone": "{name} {version} está instalado.",
       "updatesAvailable": "Actualizaciones disponibles: {list}",
