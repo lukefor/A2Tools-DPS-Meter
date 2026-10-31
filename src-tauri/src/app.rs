@@ -4266,10 +4266,14 @@ pub fn run() {
                                 let hidden = !is_visible || is_minimized
                                     || platform::window::is_hidden_in_place(&window);
                                 if aion_fg || is_self_fg {
-                                    hide_delay = 0;
-                                    if hidden {
+                                    // Minimised off the top (hide_delay reached 3) and
+                                    // restored by Windows itself, it can be visible but
+                                    // below the game: raised again then too (talyaseen,
+                                    // #148). Not after a quick switch that never hid it.
+                                    if hidden || hide_delay >= 3 {
                                         show_meter_again(&handle, &window);
                                     }
+                                    hide_delay = 0;
                                 } else if !hidden {
                                     // Wait 3 ticks (1.5s) before hiding to avoid
                                     // flickering during alt-tab transitions
