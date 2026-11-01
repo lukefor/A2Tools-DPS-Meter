@@ -1229,8 +1229,8 @@ fn get_capture_status(state: tauri::State<'_, AppState>) -> serde_json::Value {
         // When true, characterName is the game's (null = an unnamed tutorial
         // character) and the UI should adopt it rather than push its own.
         "characterNameFromGame": state.data_storage.local_identity_from_self_record(),
-        // Why the router capture is not delivering, shown where the port would be.
-        "pcapError": state.capture.router_problem().unwrap_or_default(),
+        // Why nothing is being captured, shown where the port would be.
+        "pcapError": state.capture.problem().unwrap_or_default(),
     })
 }
 
@@ -1425,16 +1425,10 @@ fn reset_auto_detection(state: tauri::State<'_, AppState>) {
     state.ping_tracker.reset();
 }
 
+/// The one capture device there is: the router's interface, once one is set.
 #[tauri::command]
-async fn get_available_devices(state: tauri::State<'_, AppState>) -> Result<Vec<String>, String> {
-    // Capturing on the router, its interface is the only device there is.
-    if let Some(label) = state.capture.router_label() {
-        return Ok(vec![label]);
-    }
-    // Device discovery can block in the OS/pcap library. Keep it off the UI loop.
-    Ok(tauri::async_runtime::spawn_blocking(|| {
-        crate::capture::pcap_capturer::list_device_labels().unwrap_or_default()
-    }).await.unwrap_or_default())
+fn get_available_devices(state: tauri::State<'_, AppState>) -> Vec<String> {
+    state.capture.router_label().into_iter().collect()
 }
 
 /// What Settings stores for capturing on the router: the `ssh` destination,
@@ -1448,30 +1442,20 @@ fn router_target(settings: &Settings) -> Option<RouterTarget> {
     })
 }
 
-/// Capture on the router named by `ssh` (`root@192.168.1.1`), or on this
-/// machine again when it is empty. Takes effect at once.
+/// Capture on the router named by `ssh` (`root@192.168.1.1`), or stop
+/// capturing when it is empty. Takes effect at once.
 #[tauri::command]
-fn set_router_capture(app: tauri::AppHandle, state: tauri::State<'_, AppState>, ssh: String) -> bool {
+fn set_router_capture(app: tauri::AppHandle, state: tauri::State<'_, AppState>, ssh: String) {
     let ssh = ssh.trim().to_string();
     if state.settings.set("capture.router", &ssh) {
         let _ = app.emit("setting-changed", serde_json::json!({ "key": "capture.router", "value": ssh }));
     }
     let target = router_target(&state.settings);
-    tracing::info!("Capture source: {}", target.as_ref().map_or("this machine".to_string(), |t| t.label()));
-    // A device picked from this machine's list matches nothing the router
-    // sends, and a lock is on the old source's device.
-    if target.is_some() {
-        state.port_detector.set_preferred_device(None);
-    }
+    tracing::info!("Capture source: {}", target.as_ref().map_or("none".to_string(), |t| t.label()));
+    // A lock is on the old router's device.
     state.port_detector.reset();
     state.ping_tracker.reset();
-    state.capture.switch_to(target)
-}
-
-#[tauri::command]
-fn set_manual_device(state: tauri::State<'_, AppState>, device: String) {
-    let dev = if device.trim().is_empty() { None } else { Some(device) };
-    state.port_detector.set_preferred_device(dev);
+    state.capture.switch_to(target);
 }
 
 #[tauri::command]
@@ -3891,14 +3875,6 @@ pub fn run() {
             if settings.get("dpsMeter.saveRawPackets").as_deref() == Some("true") {
                 logging::logger::set_packet_log_enabled(true, &app_data_dir);
             }
-            // A capture device the player picked by hand (Settings, Auto-detect
-            // off) is kept across restarts: it was held in memory only, so a
-            // VPN adapter chosen over auto-detection was lost (#39).
-            if settings.get("dpsMeter.autoDetectDevice").as_deref() == Some("false") {
-                if let Some(device) = settings.get("dpsMeter.manualDevice").filter(|d| !d.trim().is_empty()) {
-                    port_detector.set_preferred_device(Some(device));
-                }
-            }
 
             let (tx, rx) = mpsc::channel::<CapturedPayload>(4096);
 
@@ -3929,7 +3905,7 @@ pub fn run() {
                 #[cfg(feature = "online")]
                 stream_overlay: crate::stream_overlay::Manager::default(),
                 anchored_height: std::sync::atomic::AtomicI32::new(startup_height),
-                capture: LiveCapture::new(tx, port_detector.clone()),
+                capture: LiveCapture::new(tx),
             };
             let capture_suspended = state.capture_suspended.clone();
 
@@ -4055,14 +4031,13 @@ pub fn run() {
                 }
             }
 
-            // Start capturing: on the router when Settings names one, otherwise
-            // here, which needs Npcap.
+            // Start capturing on the router Settings names. Without one there
+            // is nothing to capture, and Settings says so.
             let router = router_target(&app.state::<AppState>().settings);
-            if !app.state::<AppState>().capture.switch_to(router) {
-                tracing::error!("Npcap is not installed — packet capture disabled");
-                // Offer to install it, and start capturing once it is in.
-                crate::npcap_setup::offer(app.handle().clone(), app.state::<AppState>().capture.unstarted_local());
+            if router.is_none() {
+                tracing::warn!("No router set (Settings > Capture on router): not capturing");
             }
+            app.state::<AppState>().capture.switch_to(router);
 
             let mut dispatcher = CaptureDispatcher::new(
                 data_storage.clone(),
@@ -4642,7 +4617,6 @@ pub fn run() {
             reset_auto_detection,
             get_available_devices,
             set_router_capture,
-            set_manual_device,
             replay_file,
             test_auto_hide,
             check_for_update,

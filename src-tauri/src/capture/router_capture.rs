@@ -23,7 +23,7 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use super::captured_payload::CapturedPayload;
-use super::pcap_capturer::parse_tcp_payload;
+use super::tcp_frame::parse_tcp_payload;
 
 /// The interface OpenWrt bridges its LAN ports and Wi-Fi into.
 pub const DEFAULT_INTERFACE: &str = "br-lan";

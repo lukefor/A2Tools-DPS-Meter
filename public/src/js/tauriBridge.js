@@ -349,13 +349,6 @@
     window._dpsApp?._onOverlayLockChanged?.(!!event?.payload);
   });
 
-  listen("npcap-missing", () => {
-    const msg = "Npcap is required for packet capture but is not installed.\n\nWould you like to download it now?";
-    if (confirm(msg)) {
-      shellOpen("https://npcap.com/#download");
-    }
-  });
-
   listen("combat-reset", () => {
     // Clear frontend state without re-invoking backend (already cleared by hotkey)
     cachedDpsJson = null;
@@ -724,9 +717,6 @@
       localStorage.setItem("capture.router", value);
       window._cachedDevices = null;
       return invoke("set_router_capture", { ssh: value }).catch(() => false);
-    },
-    setManualDevice(device) {
-      invoke("set_manual_device", { device: device || "" }).catch(() => {});
     },
     resetAutoDetection() {
       invoke("reset_auto_detection").catch(() => {});

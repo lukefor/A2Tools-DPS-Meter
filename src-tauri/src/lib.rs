@@ -50,8 +50,6 @@ mod presence;
 pub mod share;
 #[cfg(feature = "online")]
 pub mod stream_overlay;
-#[cfg(feature = "desktop")]
-mod npcap_setup;
 
 #[cfg(feature = "desktop")]
 mod app;

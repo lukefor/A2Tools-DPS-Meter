@@ -6729,7 +6729,7 @@ class DpsApp {
     }
     const info = this.safeParseJSON(raw, {});
 
-    // Show Npcap error if present
+    // Why nothing is being captured (no router set, or it cannot be reached)
     const pcapErr = typeof info?.pcapError === "string" ? info.pcapError.trim() : "";
     if (pcapErr) {
       this.lockedIp.textContent = "";

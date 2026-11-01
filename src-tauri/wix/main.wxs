@@ -47,21 +47,6 @@
         <!-- Property to forward cli args to the launched app to not lose those of the pre-update instance -->
         <Property Id="LAUNCHAPPARGS" Secure="yes" />
 
-        <!-- A2Tools: Npcap, which the meter reads the game's traffic with,
-             found by its capture library in System32\Npcap. When it is not
-             there, the wizard has a page offering to install it (ticked to
-             start): on Finish the meter starts with its install-npcap option,
-             downloads Npcap's installer from npcap.com and opens it, Npcap's
-             own wizard as the player would run it (the free Npcap may not be
-             bundled or installed silently). Never in an unattended update:
-             there is no wizard then. -->
-        <Property Id="A2T_NPCAP_FOUND" Secure="yes">
-            <DirectorySearch Id="A2tNpcapDir" Path="[System64Folder]Npcap" Depth="0">
-                <FileSearch Id="A2tNpcapWpcap" Name="wpcap.dll" />
-            </DirectorySearch>
-        </Property>
-        <Property Id="A2T_INSTALL_NPCAP" Value="1" Secure="yes" />
-
         {{#if allow_downgrades}}
             <MajorUpgrade Schedule="afterInstallInitialize" AllowDowngrades="yes" />
         {{else}}
@@ -108,39 +93,10 @@
         <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.LaunchApp)" />
         <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
         <CustomAction Id="LaunchApplication" Impersonate="yes" FileKey="Path" ExeCommand="[LAUNCHAPPARGS]" Return="asyncNoWait" />
-        <!-- The meter, to install Npcap (see A2T_NPCAP_FOUND), whether or not
-             "Launch" was ticked: it is what fetches Npcap's installer. -->
-        <CustomAction Id="A2tLaunchNpcapSetup" Impersonate="yes" FileKey="Path" ExeCommand="--install-npcap" Return="asyncNoWait" />
 
         <UI>
             <!-- launch app checkbox -->
-            <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed and NOT (A2T_INSTALL_NPCAP = "1" and NOT A2T_NPCAP_FOUND)</Publish>
-            <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="A2tLaunchNpcapSetup">A2T_INSTALL_NPCAP = "1" and NOT A2T_NPCAP_FOUND and NOT Installed</Publish>
-
-            <!-- The Npcap page, between the folder and Install, only when
-                 Npcap isn't there (Order 5 and 3 replace the stock steps). -->
-            <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="A2tNpcapDlg" Order="5">(WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID = "1") AND NOT A2T_NPCAP_FOUND</Publish>
-            <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="A2tNpcapDlg" Order="3">NOT Installed AND NOT A2T_NPCAP_FOUND</Publish>
-
-            <Dialog Id="A2tNpcapDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
-                <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
-                    <Publish Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
-                </Control>
-                <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
-                    <Publish Event="NewDialog" Value="InstallDirDlg">1</Publish>
-                </Control>
-                <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
-                    <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
-                </Control>
-                <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
-                <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
-                <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
-                <Control Id="Title" Type="Text" X="15" Y="6" Width="290" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Npcap" />
-                <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="The meter needs Npcap to read the game's traffic." />
-                <Control Id="Body" Type="Text" X="20" Y="60" Width="330" Height="66" NoPrefix="yes" Text="Npcap isn't installed on this PC. When setup finishes, the meter can download Npcap's installer from npcap.com and open it for you: click through Npcap's setup and the meter starts reading the game as soon as it's done. Npcap is free for personal use and made by the Nmap Project." />
-                <Control Id="InstallNpcap" Type="CheckBox" X="20" Y="134" Width="330" Height="17" Property="A2T_INSTALL_NPCAP" CheckBoxValue="1" Text="Install Npcap when setup finishes" />
-                <Control Id="Later" Type="Text" X="20" Y="160" Width="330" Height="40" NoPrefix="yes" Text="Unticked, the meter asks again when it starts, or get Npcap yourself from npcap.com (tick &quot;WinPcap API-compatible Mode&quot; there)." />
-            </Dialog>
+            <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
 
             <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
 

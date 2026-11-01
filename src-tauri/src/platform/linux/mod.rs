@@ -18,7 +18,6 @@ pub mod discord_ipc;
 pub mod fps;
 mod file_permissions;
 mod focus;
-pub mod pcap;
 pub mod process;
 pub mod screen;
 pub mod secret;

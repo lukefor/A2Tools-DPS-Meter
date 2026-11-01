@@ -10,7 +10,6 @@ pub mod dialog;
 pub mod discord_ipc;
 pub mod fps;
 pub mod hotkeys;
-pub mod pcap;
 pub mod process;
 pub mod screen;
 pub mod secret;

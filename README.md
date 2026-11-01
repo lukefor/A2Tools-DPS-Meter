@@ -6,6 +6,8 @@
 
 Real-time DPS meter overlay for AION 2. Captures game network packets to display damage, skills, and combat statistics.
 
+> **This fork captures only on an OpenWrt router, over SSH.** It has no Npcap capture: ignore the Npcap steps below, and set the router up as **[Capturing on a router](docs/router-capture.md)** describes. Its default build is the private (offline) one described below.
+
 The **[AION 2 DPS Meter website, a2tools.app](https://a2tools.app)** has the download, shared fight logs, leaderboards and class stats.
 
 **[Download Latest Release](https://github.com/taengu/A2Tools-DPS-Meter/releases)** | **[A2Tools.app](https://a2tools.app)**
@@ -43,8 +45,6 @@ The **[AION 2 DPS Meter website, a2tools.app](https://a2tools.app)** has the dow
 
 - **64-bit (x86_64) with WebKitGTK 4.1:** Ubuntu 22.04 or newer, Debian 12, Fedora 39 or newer, openSUSE, current Arch, CachyOS, Manjaro or EndeavourOS, Bazzite and other image-based Fedoras, or Steam Deck (SteamOS, through distrobox)
 - Packages and setup for each: the **[Linux guide](docs/linux.md)**
-
-Rather not install Npcap on the gaming PC? With an **OpenWrt router**, the meter can capture there instead: see **[Capturing on a router](docs/router-capture.md)**.
 
 ## Installation
 

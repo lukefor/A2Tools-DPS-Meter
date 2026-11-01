@@ -1,78 +1,42 @@
-//! Where live packets come from: this machine's interfaces through libpcap, or
-//! the router's through SSH (`router_capture`). Settings switches between them
-//! while the meter runs.
-
-use std::sync::Arc;
+//! Where live packets come from: the router, through SSH (`router_capture`).
+//! This build captures nowhere else. Settings names the router and can change
+//! it while the meter runs.
 
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
 use super::captured_payload::CapturedPayload;
-use super::combat_port_detector::CombatPortDetector;
-use super::pcap_capturer::PcapCapturer;
 use super::router_capture::{RouterCapture, RouterTarget};
-
-enum Source {
-    /// Nothing: the pcap library would not load.
-    None,
-    Local(PcapCapturer),
-    Router(RouterCapture),
-}
 
 pub struct LiveCapture {
     sender: mpsc::Sender<CapturedPayload>,
-    port_detector: Arc<CombatPortDetector>,
-    source: Mutex<Source>,
+    router: Mutex<Option<RouterCapture>>,
 }
 
 impl LiveCapture {
-    pub fn new(sender: mpsc::Sender<CapturedPayload>, port_detector: Arc<CombatPortDetector>) -> Self {
-        Self { sender, port_detector, source: Mutex::new(Source::None) }
+    pub fn new(sender: mpsc::Sender<CapturedPayload>) -> Self {
+        Self { sender, router: Mutex::new(None) }
     }
 
-    /// A capturer on this machine that has not started, for the Npcap
-    /// installer to start once Npcap is in (`npcap_setup::offer`).
-    pub fn unstarted_local(&self) -> PcapCapturer {
-        PcapCapturer::new(self.sender.clone(), self.port_detector.clone())
-    }
-
-    /// Capture on `router`, or on this machine when it is `None`. Returns
-    /// false when this machine was asked for and its pcap library is missing.
-    pub fn switch_to(&self, router: Option<RouterTarget>) -> bool {
-        let mut source = self.source.lock();
-        match std::mem::replace(&mut *source, Source::None) {
-            Source::None => {}
-            Source::Local(pcap) => pcap.stop(),
-            Source::Router(remote) => remote.stop(),
+    /// Capture on `router`, or stop capturing when it is `None`.
+    pub fn switch_to(&self, router: Option<RouterTarget>) {
+        let mut current = self.router.lock();
+        if let Some(old) = current.take() {
+            old.stop();
         }
-        match router {
-            Some(target) => {
-                *source = Source::Router(RouterCapture::start(target, self.sender.clone()));
-                true
-            }
-            None if crate::platform::pcap::library_available() => {
-                let pcap = self.unstarted_local();
-                pcap.start();
-                *source = Source::Local(pcap);
-                true
-            }
-            None => false,
-        }
+        *current = router.map(|target| RouterCapture::start(target, self.sender.clone()));
     }
 
     /// The device the router's packets carry, while capturing there.
     pub fn router_label(&self) -> Option<String> {
-        match &*self.source.lock() {
-            Source::Router(r) => Some(r.label().to_string()),
-            _ => None,
-        }
+        self.router.lock().as_ref().map(|r| r.label().to_string())
     }
 
-    /// Why the router capture is not working, while it is not.
-    pub fn router_problem(&self) -> Option<String> {
-        match &*self.source.lock() {
-            Source::Router(r) => r.problem(),
-            _ => None,
+    /// Why nothing is being captured, while nothing is.
+    pub fn problem(&self) -> Option<String> {
+        match &*self.router.lock() {
+            Some(r) => r.problem(),
+            None => Some("Set Capture on router in Settings".into()),
         }
     }
 }

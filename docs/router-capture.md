@@ -1,6 +1,6 @@
 # Capturing on an OpenWrt router
 
-The meter normally reads the game's traffic on the PC the game runs on, through Npcap. It can read it on your router instead: the meter connects to the router over SSH, runs `tcpdump` there, and reads the packets it streams back. The PC then needs no Npcap at all.
+This meter reads the game's traffic on your router, and nowhere else: it connects to the router over SSH, runs `tcpdump` there, and reads the packets it streams back. The PC the game runs on needs no Npcap, and nothing on it captures packets.
 
 The meter still runs on the PC with the game, because it draws over the game and watches for its window. Only packet capture moves to the router.
 
@@ -68,7 +68,7 @@ On a fast internet connection this can lower the router's top speed, since the C
 
 In the meter's **Settings > Connection > Capture on router**, enter the same address you used with `ssh`, e.g. `root@192.168.1.1`, then press Enter. The meter switches over at once. **Detected device/port** shows what went wrong if it cannot connect, and shows the router once the game is found.
 
-To go back to capturing on the PC, clear the field.
+Until a router is set, the meter captures nothing, and Detected device/port says so. Clearing the field stops capture.
 
 ## What the router sends
 

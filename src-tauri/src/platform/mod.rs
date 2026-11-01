@@ -40,7 +40,7 @@ pub mod procfs;
 pub mod screenshot;
 
 pub use os::{
-    admin, clock, dialog, discord_ipc, fps, pcap, process, secret, shell, updater, window, window_detector, window_rules, window_startup,
+    admin, clock, dialog, discord_ipc, fps, process, secret, shell, updater, window, window_detector, window_rules, window_startup,
 };
 
 pub use os::atomic_file;
