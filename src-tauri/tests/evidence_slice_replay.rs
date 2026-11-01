@@ -181,7 +181,7 @@ fn build_whole_capture_slice(
     let start = lines.first().map(|l| l.at_ms).unwrap_or(0);
     let end = lines.last().map(|l| l.at_ms).unwrap_or(0);
 
-    let slice = evidence_slice::build(&packets, start, end, &names).expect("slice builds");
+    let slice = evidence_slice::build(&packets, start, end, &names, [7; 32]).expect("slice builds");
     (slice, plaintext, start)
 }
 
@@ -493,7 +493,24 @@ fn no_readable_text_from_the_capture_survives_into_the_slice() {
         !n.is_empty() && content.windows(n.len()).any(|w| w == n)
     };
 
-    let survivors: Vec<&String> = original.iter().filter(|s| contains(s)).collect();
+    // A string survives when it is still there *as a string*: its length byte
+    // and its text, which is how the game writes one and how a name the
+    // blinder missed would be left. Searching the bare text matched binary:
+    // runs of 0x64 (a value of 100, "ddddddddd") and stat bytes that read as
+    // "jd47ddddep;4", in records that never framed them as text (2026-10-11).
+    // The third-party check below still searches the bare text.
+    let contains_framed = |needle: &str| {
+        let n = needle.as_bytes();
+        if n.is_empty() || n.len() > 255 {
+            return false;
+        }
+        let mut framed = Vec::with_capacity(n.len() + 1);
+        framed.push(n.len() as u8);
+        framed.extend_from_slice(n);
+        content.windows(framed.len()).any(|w| w == framed.as_slice())
+    };
+
+    let survivors: Vec<&String> = original.iter().filter(|s| contains_framed(s)).collect();
     println!(
         "{} length-prefixed strings in the capture, {} survived",
         original.len(),

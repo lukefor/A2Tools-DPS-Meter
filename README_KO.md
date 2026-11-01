@@ -6,6 +6,8 @@
 
 AION 2 실시간 DPS 미터 오버레이. 게임 네트워크 패킷을 캡처하여 데미지, 스킬, 전투 통계를 표시합니다.
 
+**[아이온2 DPS 미터 웹사이트, a2tools.app](https://a2tools.app)** 에서 다운로드, 공유된 전투 로그, 순위표, 직업 통계를 볼 수 있습니다.
+
 **[최신 버전 다운로드](https://github.com/taengu/A2Tools-DPS-Meter/releases)** | **[A2Tools.app](https://a2tools.app)**
 
 [English](README.md) | [简体中文](README_ZH.md) | [繁體中文](README_ZH-TW.md)
@@ -13,23 +15,33 @@ AION 2 실시간 DPS 미터 오버레이. 게임 네트워크 패킷을 캡처�
 ## 주요 기능
 
 - 실시간 DPS 추적 (플레이어별 분석)
-- 스킬별 데미지 분석 (치명타, 백어택, 패리, 더블, 퍼펙트)
+- 스킬별 데미지 분석 (치명타, 백어택, 패리, 더블, 퍼펙트, 그리고 선택 항목으로 막기, 완벽 막기, 철벽, 재생, 빗나감, 저항)
 - DOT (지속 피해) 추적
 - 소환수 데미지 주인에게 합산
 - 다양한 타겟 선택 모드 (보스, 마지막 타격, 전체, 트레인)
 - DPS 차트 및 타임라인
 - 보스전 자동 저장
 - 핑 모니터링
-- 다국어 지원 (한국어, 영어, 중국어 번체/간체)
+- 10개 언어: 한국어, 영어, 중국어(번체/간체), 일본어, 독일어, 프랑스어, 스페인어, 포르투갈어, 러시아어
 - 항상 위 투명 오버레이
 - 테마 및 커스터마이징
+- 다른 PC의 OBS로 방송하는 방송 오버레이: 브라우저 소스로 추가하며, 방송에 표시할 내 이름을 정할 수 있음
+- [a2tools.app](https://a2tools.app/logs)에 전투 업로드: 공유 링크, 순위표, 직업 통계
+- Windows 및 Linux ([Linux 가이드](docs/linux.md))
 
 ## 요구 사항
+
+**Windows**
 
 - **Windows 10/11** (x86_64)
 - **[Npcap](https://npcap.com)** — 패킷 캡처에 필요
   - 설치 시 **"Install Npcap in WinPcap API-compatible Mode"** 체크
 - **관리자 권한** — 패킷 캡처에 필요
+
+**Linux** (Proton으로 플레이)
+
+- **64비트(x86_64), WebKitGTK 4.1:** Ubuntu 22.04 이상, Debian 12, Fedora 39 이상, openSUSE, 최신 Arch, CachyOS, Manjaro, EndeavourOS, Bazzite 등 이미지 기반 Fedora, Steam Deck(SteamOS, distrobox 사용)
+- 배포판별 패키지와 설치 방법: **[Linux 가이드](docs/linux.md)** (영어)
 
 ## 설치
 

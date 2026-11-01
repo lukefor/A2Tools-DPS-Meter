@@ -84,9 +84,33 @@ pub fn find_aion2_window_title() -> Option<String> {
     })
 }
 
+/// The process id of the AION 2 game window, found as `find_aion2_window_title`
+/// finds it.
+pub(super) fn game_pid() -> Option<u32> {
+    let windows = top_level_windows();
+    let hwnd = windows.iter().copied().find(|&h| is_game_title(&window_title(h))).or_else(|| {
+        windows.iter().copied().find(|&h| {
+            unsafe { IsWindowVisible(h) }.as_bool()
+                && !window_title(h).is_empty()
+                && exe_path(h).is_some_and(|p| is_game_exe(&p))
+        })
+    })?;
+    let mut pid: u32 = 0;
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    (pid != 0).then_some(pid)
+}
+
 /// Check if the AION 2 game window is currently running.
 pub fn find_aion2_window() -> bool {
     find_aion2_window_title().is_some()
+}
+
+/// Nothing to start: the foreground window is asked for when needed.
+/// KDE only (see the Linux version): nothing here draws under the meter.
+pub fn watch_screenshot_tool(_on_change: impl Fn(bool) + Send + Sync + 'static) {}
+
+pub fn watch_focus(_on_change: impl Fn() + Send + Sync + 'static) -> Result<(), String> {
+    Ok(())
 }
 
 /// Check if the foreground window belongs to AION 2, by title or by program.

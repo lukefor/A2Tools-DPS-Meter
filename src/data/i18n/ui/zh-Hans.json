@@ -4,10 +4,43 @@
     "display": {
       "dps": "DPS",
       "total": "DMG",
+      "damageReceived": "承伤",
       "ariaDps": "显示 DPS",
       "ariaDamage": "显示总伤害",
-      "both": "两者",
-      "ariaBoth": "显示 DPS 和总伤害"
+      "ariaDamageReceived": "显示承受伤害",
+      "hps": "HPS",
+      "totalHeal": "HEAL",
+      "stagger": "破防",
+      "ariaHps": "显示每秒治疗量",
+      "ariaHeal": "显示总治疗量",
+      "ariaStagger": "显示对首领破防条造成的削减",
+      "names": {
+        "dps": "每秒伤害",
+        "totalDamage": "总伤害",
+        "damageReceived": "承受伤害",
+        "hps": "每秒治疗",
+        "totalHeal": "总治疗",
+        "stagger": "破防",
+        "bossStagger": "首领破防 %",
+        "statColours": "数值配色",
+        "deaths": "死亡次数"
+      },
+      "sortBy": "按此排序",
+      "menuTip": "选择各行显示的项目。滚轮或右键：下一个项目",
+      "bossStaggerTip": "在首领的 HP 条上显示破防量表已削减多少",
+      "sortCol": "排序",
+      "showCol": "显示",
+      "statColoursTip": "每项数值在行、菜单和按钮上以各自的颜色显示"
+    },
+    "updates": {
+      "meter": "A2Tools DPS Meter {version} 可更新",
+      "plugins": "插件更新：{list}"
+    },
+    "targetMode": {
+      "lastHitByMe": "最后攻击的敌人",
+      "bossTargets": "仅首领",
+      "trainTargets": "训练木桩",
+      "allTargets": "所有敌人合计"
     }
   },
   "details": {
@@ -63,8 +96,18 @@
       "backTooltip": "背击 %",
       "frontal": "正面",
       "frontalTooltip": "正面攻击 %",
-      "powershard": "碎片",
-      "powershardTooltip": "能量碎片 %",
+      "shieldBlock": "盾挡",
+      "shieldBlockTooltip": "盾牌格挡 %",
+      "perfectBlock": "完挡",
+      "perfectBlockTooltip": "完美格挡 %",
+      "ironWall": "铁壁",
+      "ironWallTooltip": "铁壁 %",
+      "regeneration": "再生",
+      "regenerationTooltip": "再生 %",
+      "miss": "未中",
+      "missTooltip": "未命中",
+      "resist": "抵抗",
+      "resistTooltip": "抵抗",
       "regen": "回复",
       "regenTooltip": "吸血回复量",
       "multiHit": "MH%",
@@ -76,7 +119,18 @@
       "avgDmg": "平均",
       "avgDmgTooltip": "平均伤害",
       "maxDmg": "最大",
-      "maxDmgTooltip": "最大伤害"
+      "maxDmgTooltip": "最大伤害",
+      "heal": "治疗",
+      "healTooltip": "治疗量",
+      "healPct": "治疗%",
+      "healPctTooltip": "治疗占比"
+    },
+    "peak": {
+      "label": "队伍列表",
+      "show": "在平均值旁显示峰值 DPS（最佳 5 秒）"
+    },
+    "party": {
+      "activeDps": "有效时间 DPS：{dps}（战斗 {total} 中的 {active}）"
     },
     "stats": {
       "totalDamage": "总伤害",
@@ -91,7 +145,17 @@
       "multiHitHits": "多段打击",
       "maxHp": "最大HP",
       "hits": "命中次数",
-      "selfHealing": "自我治疗"
+      "selfHealing": "自我治疗",
+      "damageReceived": "承受伤害",
+      "deaths": "死亡次数",
+      "avgDps": "平均 DPS",
+      "peakDps": "峰值 DPS",
+      "peakDpsTip": "战斗中任意 5 秒内的最高 DPS",
+      "blockedTaken": "盾挡（完美）",
+      "blockedTakenTip": "受到的攻击中用盾牌挡下的比例，括号内为完美盾挡",
+      "parriedTaken": "格挡（完美）",
+      "parriedTakenTip": "受到的攻击中格挡的比例，括号内为完美格挡",
+      "parryRateTip": "你的攻击中被目标格挡的比例"
     },
     "titleFor": "针对",
     "titleVs": "vs",
@@ -100,9 +164,100 @@
     "history": {
       "allPlayers": "全体玩家"
     },
-    "dpsChart": "DPS 图表",
+    "dpsChart": "每秒伤害",
     "historyBtn": "历史",
-    "timeline": "时间轴"
+    "timeline": "时间轴",
+    "buffs": {
+      "title": "增益",
+      "castByLabel": "施放者",
+      "casterAll": "全部",
+      "casterParty": "队伍",
+      "casterSelf": "自己",
+      "sortLabel": "排序",
+      "sortUptime": "覆盖率",
+      "sortFirst": "施加顺序",
+      "showPassives": "被动",
+      "passives": "被动",
+      "uptime": "覆盖",
+      "onTarget": "目标身上的减益",
+      "selectPlayer": "在上方选择一名玩家以查看其增益。",
+      "noneShown": "没有符合筛选条件的项目。",
+      "none": "本场战斗中未检测到增益或减益。",
+      "older": "此战斗没有增益数据（由旧版本记录）。",
+      "loading": "加载中...",
+      "unknownCaster": "未知",
+      "summonTag": "召唤物",
+      "castBy": "施放者：{name}",
+      "stacks": "层数：{n}",
+      "ended": "结束：{reason}",
+      "beforePull": "战斗开始前已生效",
+      "end": {
+        "stacks": "层数变化",
+        "expired": "到期",
+        "takenOff": "被技能解除",
+        "removed": "被移除（原因未知）",
+        "recast": "被其他施放者重新施加",
+        "gone": "目标死亡或离开",
+        "mapLoad": "切换地图",
+        "notListed": "结束未被观测到",
+        "pushedOut": "被新的层数挤掉",
+        "unseen": "到期（未见结束记录）",
+        "stillOn": "战斗结束时仍生效",
+        "replaced": "被新等级替换"
+      }
+    },
+    "stagger": {
+      "title": "破防",
+      "unknownActor": "未知",
+      "unknownSkill": "未知技能",
+      "older": "此战斗没有破防数据（由旧版本记录）。",
+      "loading": "加载中...",
+      "none": "此战斗中没有削减任何破防条。",
+      "incomplete": "未看到起始值：缺少之前的破防数值。",
+      "ambiguous": "可能属于其他玩家：同一时间有其他人命中。",
+      "ambiguousCount": "{n} 次命中可能属于其他玩家。",
+      "value": "破防 {n}",
+      "ended": {
+        "break": "{secs} 秒后破防",
+        "reset": "失败：{max} 中剩余 {missing}",
+        "death": "破防前被击败：{max} 中剩余 {missing}",
+        "despawn": "破防前消失：{max} 中剩余 {missing}",
+        "fightEnd": "战斗结束时仍未完成：{max} 中剩余 {missing}"
+      }
+    },
+    "fightTimeline": "战斗时间线",
+    "replay": {
+      "label": "回放",
+      "title": "回放",
+      "play": "播放回放",
+      "pause": "暂停",
+      "speed": "播放速度",
+      "position": "回放位置",
+      "positionText": "{at} / {total}",
+      "exit": "结束回放（显示整场战斗）",
+      "wholeFightNote": "承受伤害、最小 / 最大值和增益持续率为整场战斗的数值。",
+      "moreSkills": "还有 {n} 个，暂停时显示",
+      "noHealTiming": "本场战斗的治疗没有时间记录（由旧版本保存）：显示整场战斗的数值。",
+      "unavailable": "这场战斗保存时没有命中时间，无法回放"
+    },
+    "casts": "施放",
+    "resize": "拖动调整大小",
+    "healTimingNote": "此战斗没有治疗时间数据（由旧版本记录）。",
+    "chart": {
+      "bossHp": "首领 HP",
+      "ping": "延迟",
+      "death": "死亡",
+      "died": "阵亡于",
+      "downFor": "倒地"
+    },
+    "hpsChart": "每秒治疗",
+    "sectionChart": "图表",
+    "showSections": "显示的部分",
+    "hoverTooltip": {
+      "loading": "加载中...",
+      "empty": "此战斗没有技能数据",
+      "error": "无法加载技能"
+    }
   },
   "history": {
     "title": "战斗历史",
@@ -121,6 +276,13 @@
     "viewDungeon": "按副本分组",
     "viewGrouped": "按首领分组",
     "fightCount": "{n} 场",
+    "best": "最快 {time}",
+    "top": "最高 {damage}",
+    "showAll": "显示全部 {n} 场",
+    "showFewer": "收起",
+    "expandAll": "全部展开",
+    "collapseAll": "全部收起",
+    "training": "训练",
     "fightCountOne": "1 场",
     "previewUpload": "预览上传内容",
     "previewUploadTip": "把分享这场战斗时会上传的内容写成文件。不会发送。",
@@ -131,25 +293,61 @@
     "uploadWorking": "上传中…",
     "uploadDonePublic": "已上传。链接已复制：{url}",
     "uploadDonePrivate": "已以私密方式上传。链接已复制：{url}",
-    "openWorld": "野外"
+    "openWorld": "野外",
+    "tabFights": "战斗",
+    "tabBests": "个人最佳",
+    "search": "首领或副本…",
+    "allCharacters": "所有角色",
+    "allDifficulties": "所有难度",
+    "periodAll": "全部时间",
+    "periodToday": "最近 24 小时",
+    "period7": "最近 7 天",
+    "period30": "最近 30 天",
+    "sort": "排序",
+    "sortNewest": "最新",
+    "sortFastest": "最快击杀",
+    "sortPartyDps": "队伍 DPS",
+    "sortMyDps": "你的 DPS",
+    "sortRecent": "最新",
+    "sortTier": "副本阶级",
+    "killsOnly": "仅击杀",
+    "wipe": "团灭",
+    "pb": "最佳",
+    "pbTip": "你的个人最佳之一",
+    "party": "队伍",
+    "you": "你",
+    "totalDamage": "总伤害",
+    "finalBoss": "最终首领",
+    "fightGone": "该战斗已不再保存，但纪录保留。",
+    "unconfirmedTip": "未记录击杀（2.0.87 之前的战斗）：依造成的伤害判断。",
+    "openBest": "打开此战斗",
+    "killOne": "击杀 1 次",
+    "wipeOne": "团灭 1 次",
+    "kills": "击杀 {n} 次",
+    "wipes": "团灭 {n} 次",
+    "otherBosses": "其他首领（{n}）",
+    "otherLevels": "其他等级（{n}）",
+    "noBests": "尚无副本击杀。",
+    "encounter": "对象",
+    "fastestKill": "最快击杀",
+    "yourBest": "你的最佳 DPS",
+    "partyBest": "队伍最佳"
   },
   "settings": {
     "title": "设置",
-    "lockedPort": "检测到的设备/端口",
-    "resetDetection": "重置检测",
-    "characterName": "Name#ID",
+    "lockedPort": "检测到的连接",
+    "resetDetection": "重新检测",
+    "characterName": "我的角色",
     "characterNamePlaceholder": "输入你的角色名称",
-    "pinMeToTop": "将我置顶",
+    "pinMeToTop": "将我的行置顶",
     "slimMode": "精简模式",
     "meterLayout": {
       "label": "仪表布局",
-      "beta": "Beta 界面",
-      "betaSlim": "Beta 精简",
-      "classic": "经典界面",
-      "classicSlim": "经典精简"
+      "standard": "标准",
+      "slim": "紧凑"
     },
     "detailsMonitor": {
-      "label": "在显示器上显示详情",
+      "label": "在副显示器上显示详情",
       "off": "关闭",
       "primary": "主屏",
       "missing": "该显示器未连接。",
@@ -166,39 +364,85 @@
     "connection": "连接",
     "diagnostics": "诊断",
     "device": {
-      "label": "抓包网卡",
+      "label": "网络适配器",
       "autoDetect": "自动检测"
     },
     "advanced": "高级",
     "bossLogs": "启用每场Boss日志",
-    "saveRawPackets": "启用数据包日志",
+    "saveRawPackets": "数据包日志",
     "resetAllSettings": "重置所有设置",
     "bold": {
-      "label": "加粗",
+      "label": "粗体文字",
       "names": "名称",
       "dps": "DPS"
     },
     "showPing": "显示延迟",
-    "showTotalDps": "显示总DPS/DMG",
-    "roundDps": "DPS取整",
-    "autoHideMeter": "自动隐藏面板",
-    "showSuspendBtn": "显示暂停按钮",
-    "showLockBtn": "显示锁定按钮（点击穿透）",
+    "showOdyle": "显示奥德能量",
+    "odyleEnergy": "奥德能量",
+    "showTtk": "显示预计击杀时间",
+    "showTotalDps": "显示队伍总计",
+    "roundDps": "DPS 以千为单位显示 (13k)",
+    "showDpsSuffix": "DPS 后显示 /s",
+    "autoHideMeter": "AION2 不在前台时隐藏",
+    "hideWhenGameClosed": "AION2 关闭时隐藏",
+    "hideWhenSolo": "仅在队伍中显示",
+    "hideOutOfCombat": {
+      "label": "脱离战斗时隐藏",
+      "off": "关闭",
+      "seconds": "{seconds} 秒后"
+    },
+    "showSuspendBtn": "显示暂停捕获按钮",
+    "showLockBtn": "显示点击穿透锁定按钮",
     "playerLimit": {
       "label": "最大显示人数"
     },
-    "debugLogging": "启用调试日志",
+    "partyPresence": "显示队伍中的 A2Tools 用户",
+    "debugLogging": "调试日志",
     "quit": "退出",
     "discord": {
       "title": "Discord",
       "activity": "在 Discord 显示我正在玩的内容",
-      "activityHint": "AION2 打开时，你的 Discord 状态会显示角色名、职业、等级、服务器，以及正在对战的首领。通过这台电脑上的 Discord 应用显示，不需要账号。"
+      "activityHint": "AION2 打开时，你的 Discord 状态会显示角色名、职业、等级、服务器，以及正在对战的首领。通过这台电脑上的 Discord 应用显示，不需要账号。选择 Discord 中显示的数值后，还会显示战斗力或装备分数。",
+      "stat": "Discord 中显示的数值",
+      "statHint": "Discord 状态中显示在等级后面的数值。"
+    },
+    "streamOverlay": {
+      "title": "直播",
+      "enable": "直播叠加层（另一台电脑上的 OBS）",
+      "enableHint": "在局域网内提供面板，让第二台电脑上的 OBS 以浏览器源显示。",
+      "port": "端口",
+      "url": "浏览器源 URL",
+      "copy": "复制",
+      "copied": "已复制",
+      "newKey": "新密钥",
+      "help": "在另一台电脑的 OBS 中，用此 URL 添加浏览器源。首次使用时 Windows 防火墙会询问是否允许，请在专用网络上允许。局域网内任何拿到链接的人都能看到面板；点“新密钥”会使旧链接失效。",
+      "noAddress": "未找到网络地址。这台电脑是否已连接网络？",
+      "portInvalid": "请输入 1024 到 65535 之间的端口。",
+      "error": "叠加层无法启动：{error}",
+      "waiting": "等待战斗…",
+      "reconnecting": "正在重新连接面板…",
+      "player": "玩家",
+      "displayName": "直播中显示的名字",
+      "displayNamePlaceholder": "你的角色名"
     },
     "version": "版本",
+    "update": {
+      "check": "检查更新",
+      "checking": "正在检查…",
+      "current": "已是最新",
+      "installing": "正在更新…",
+      "available": "{version} 已发布",
+      "failed": "无法检查，请稍后再试。"
+    },
     "theme": {
-      "label": "主题",
+      "label": "配色主题",
       "options": {
         "aion2": "AION2",
+        "aion2Classes": "AION2（职业颜色）",
+        "aion2ClassesVivid": "AION2（职业颜色，鲜艳）",
+        "aion2Spectrum": "光谱",
+        "aion2Aurora": "极光",
+        "aion2Sunset": "日落",
         "asmodian": "魔族",
         "cogni": "认知",
         "elyos": "天族",
@@ -210,27 +454,85 @@
         "varian": "瓦里安"
       }
     },
+    "settingsTheme": {
+      "label": "设置窗口颜色",
+      "tip": "此设置窗口的颜色。计量器保留自己的主题。",
+      "options": {
+        "meter": "计量器主题",
+        "midnight": "午夜",
+        "graphite": "石墨",
+        "violet": "紫罗兰",
+        "forest": "森林",
+        "crimson": "深红",
+        "ocean": "海洋",
+        "sapphire": "蓝宝石",
+        "indigo": "靛蓝",
+        "rose": "玫瑰",
+        "sunset": "日落",
+        "amber": "琥珀",
+        "copper": "铜",
+        "lime": "青柠",
+        "ice": "冰",
+        "slate": "石板",
+        "onyx": "黑玛瑙"
+      }
+    },
+    "font": {
+      "label": "字体",
+      "tip": "计量器、设置、战斗记录和详情使用的字体。",
+      "options": {
+        "meter": "计量器字体",
+        "system": "系统字体",
+        "inter": "Inter",
+        "exo2": "Exo 2",
+        "oxanium": "Oxanium",
+        "jetbrains": "JetBrains Mono (数字等宽)",
+        "atkinson": "Atkinson Hyperlegible (字母和数字清晰)",
+        "lexend": "Lexend (更易阅读)",
+        "andika": "Andika (适合阅读障碍)"
+      }
+    },
+    "textureOffset": "错开纹理",
+    "barTexture": {
+      "label": "条形纹理",
+      "supportersOnly": "支持者专属：在上方的 A2 Tools 账号中登录即可使用。",
+      "options": {
+        "none": "无",
+        "flames": "烈焰",
+        "crystal": "霜晶",
+        "glacier": "冰川",
+        "feathers": "羽毛",
+        "wing": "羽翼",
+        "storm": "雷暴",
+        "nebula": "星云",
+        "galaxy": "银河",
+        "aura": "灵光"
+      }
+    },
+    "appearanceGroups": {
+      "general": "常规",
+      "colours": "颜色",
+      "layout": "布局",
+      "opacity": "不透明度"
+    },
     "language": {
       "label": "语言"
     },
     "windowOpacity": {
-      "label": "主窗口不透明度"
+      "label": "背景不透明度"
+    },
+    "titleOpacity": {
+      "label": "标题栏不透明度"
     },
     "meterOpacity": {
-      "label": "计量条不透明度"
+      "label": "条形不透明度"
+    },
+    "barPreview": "预览",
+    "meterSaturation": {
+      "label": "条形颜色强度"
     },
     "bossNameSize": {
-      "label": "目标名称大小"
-    },
-    "targetWindow": {
-      "label": "目标时间范围",
-      "options": {
-        "5s": "5秒",
-        "10s": "10秒",
-        "15s": "15秒",
-        "20s": "20秒",
-        "30s": "30秒"
-      }
+      "label": "标题大小"
     },
     "targetSelection": {
       "label": "目标选择（实验性）",
@@ -241,8 +543,17 @@
         "allTargets": "所有目标合并"
       }
     },
+    "updateRate": {
+      "label": "统计刷新间隔",
+      "options": {
+        "100": "0.1 秒",
+        "200": "0.2 秒（默认）",
+        "250": "0.25 秒",
+        "500": "0.5 秒"
+      }
+    },
     "allTargetsWindow": {
-      "label": "所有目标时间窗口",
+      "label": "全部目标时间窗口",
       "options": {
         "30s": "30秒",
         "1m": "1分钟",
@@ -257,14 +568,28 @@
       "reload": "重新加载数据",
       "toggle": "显示/隐藏窗口",
       "pressKeys": "请按下按键...",
-      "needModifiers": "需要2个以上修饰键",
-      "lock": "锁定/解锁悬浮窗"
+      "tooManyKeys": "最多 3 个键",
+      "plugins": "找回插件窗口",
+      "notSet": "未设置",
+      "restoreDefaults": "恢复默认",
+      "hint": "点击一个快捷键，然后按下 1 到 3 个键。按 Esc 取消。",
+      "lock": "锁定/解锁悬浮窗",
+      "openDesktop": "桌面快捷键"
     },
     "defaultMeterMode": {
-      "label": "默认计量模式"
+      "label": "启动时的目标模式"
+    },
+    "partyStat": {
+      "label": "玩家名称旁",
+      "options": {
+        "combatPower": "战斗力",
+        "gearScore": "装备分数",
+        "both": "两者",
+        "off": "关闭"
+      }
     },
     "trainingMode": {
-      "label": "训练模式",
+      "label": "训练模式下的详情",
       "options": {
         "all": "全部",
         "highestDamage": "最高伤害"
@@ -285,20 +610,168 @@
       "failed": "登录失败：{error}",
       "supporter": "赞助者",
       "autoUpload": "自动上传首领战",
-      "autoUploadHint": "首领战结束时会以你在 a2tools.app 选择的公开设置上传到你的账号。其他玩家的名称会被遮蔽。木桩战斗不会上传。"
+      "autoUploadHint": "首领战结束时会以你在 a2tools.app 选择的公开设置上传到你的账号。其他玩家的名称会被遮蔽。木桩战斗不会上传。",
+      "guestUpload": "无需账号上传首领战",
+      "guestUploadHint": "首领战结束后，会以公开形式上传到 a2tools.app，无需账号。其他玩家仍会被隐藏。之后登录时，从这台电脑上传的战斗会归你所有。",
+      "guestClaimHint": "从这台电脑上传的战斗会为你保留。在这里登录即可归你所有，或获取代码在其他设备上认领。",
+      "guestClaimButton": "获取认领代码",
+      "guestClaimCode": "登录后在 {url} 输入 {code}。代码 15 分钟后失效。",
+      "claimed": "从这台电脑上传的 {count} 场战斗现在归你了。"
     },
     "sendLogs": {
-      "hint": "将最新的 3 个数据包日志发送给开发者，用于反馈问题。",
+      "hint": "将你的调试日志和最近的数据包日志（共 3 个文件）发送给开发者，用于错误报告。",
       "button": "发送日志给开发者",
-      "confirm": "要将最新的 3 个数据包日志发送给 A2 Tools 开发者吗？\n\n数据包日志是开启数据包记录期间录下的原始游戏通信，包含角色名称。只有开发者能打开，并会在 30 天后删除。",
+      "confirm": "要将你的调试日志和最近的数据包日志发送给 A2 Tools 开发者吗？\n\n调试日志记录了计量器的运行情况。数据包日志是开启数据包记录期间录下的原始游戏流量。两者都可能包含角色名。只有开发者能打开它们，30 天后会被删除。",
       "sending": "发送中...",
       "sent": "已发送。你的反馈代码是 {code}，请在 Discord 上告诉开发者。",
-      "failed": "无法发送：{error}"
+      "failed": "无法发送：{error}",
+      "files": "将发送以下文件：",
+      "contents": "数据包日志可能包含聊天内容和其他玩家的名字。"
+    },
+    "barGap": {
+      "label": "条形间距"
+    },
+    "debugLoggingLocked": "开启数据包日志时保持开启：分析数据包日志需要调试日志。",
+    "tips": {
+      "showOdyle": "在计量器下方以游戏中的格式显示奥德能量：基本（+充能）。登录、服务器转移及能量变化时更新。在此之前（例如重启计量器后），会以淡色显示上次看到的数值。",
+      "characterName": "你的游戏角色名和 ID，让计量器知道哪一行是你。通常会自动识别。",
+      "device": "计量器读取游戏流量的网络连接。自动检测会找到它；使用 VPN 时请手动选择。",
+      "lockedPort": "发现游戏所用的适配器和端口。",
+      "defaultMeterMode": "计量器启动时的目标模式：首领、目标、训练或全部。",
+      "playerLimit": "计量器显示的玩家行数，其余的不显示。",
+      "pinMeToTop": "无论伤害多少，你的行都排在第一。",
+      "autoHideMeter": "其他窗口位于游戏前方时计量器会隐藏，回到游戏后再出现。",
+      "detailsMonitor": "在所选显示器上打开详情窗口并保持在那里。",
+      "showTtk": "在战斗计时器旁显示整场首领战的预计时长。",
+      "showTotalDps": "在各行下方显示队伍总 DPS 和总伤害的条。",
+      "roundDps": "13,412 显示为 13k。",
+      "showSuspendBtn": "在计量器上显示一个按钮，按下后停止读取游戏流量，再按一次恢复。",
+      "showLockBtn": "让计量器忽略鼠标、点击直接作用于游戏的按钮。",
+      "windowOpacity": "计量器背景的透明程度。条形和文字不受影响。",
+      "titleOpacity": "统计窗口标题栏的透明程度，与下方背景分开设置。移动它之前，它跟随背景不透明度。",
+      "meterOpacity": "彩色伤害条的不透明程度。",
+      "meterSaturation": "条形颜色的浓淡：调低更柔和，调高更鲜艳。",
+      "bossNameSize": "条形上方首领或目标名称的大小。",
+      "partyStat": "在计量器和详情中显示在每位玩家名称旁的数字。只有你自己队伍的成员才有。",
+      "barTexture": "为计量条加上纹理，感谢您对 A2 Tools 的支持。",
+      "textureOffset": "每条的纹理从不同位置开始，让各条看起来不一样。",
+      "trainingMode": "训练模式下详情窗口显示哪些木桩：全部一起，或只显示你打得最多的那个。",
+      "allTargetsWindow": "全部目标模式下，计量器汇总最后一次命中前这段时间内命中的所有目标。",
+      "updateRate": "统计数字多久刷新一次。越快越早显示伤害，但占用更多 CPU。",
+      "partyPresence": "同样使用 A2Tools 的队友会在你的名字旁看到小小的 A2 标记，你也会看到他们的。队伍中任何使用 A2Tools 的人都看得到，因此会知道你使用第三方计量器。只会发送角色名称与服务器的哈希值。",
+      "debugLogging": "写入开发者用于排查问题的诊断日志。",
+      "saveRawPackets": "记录原始游戏流量以便提交错误报告。调试日志会随之开启。",
+      "globalHotkeys": "下面的按键在游戏处于前台时也能使用。关闭后，这些按键会释放给其他程序。在 Linux 上由桌面注册这些按键，桌面可能会请你批准。",
+      "pluginDevMode": "从这台电脑上的文件夹加载插件，用于开发和测试。这些插件未经审核，请只加载你信任的插件。",
+      "showMeter": "关闭：只显示插件。统计仍在后台记录战斗并上传。可在此处、用显示/隐藏快捷键，或插件窗口上的统计按钮重新显示。",
+      "clearOnZone": "切换区域后，何时从统计中清除上一场战斗。所有战斗都会保留在历史记录中。",
+      "hideWhenGameClosed": "游戏未运行时隐藏计量器，游戏启动后再次显示。",
+      "hideWhenSolo": "不在队伍中时隐藏计量器，加入队伍后再次显示。显示/隐藏快捷键仍可随时打开它。",
+      "hideOutOfCombat": "脱离战斗达到该时长后隐藏计量器，下一次命中时再次显示。设置、历史记录或详情窗口打开时，或鼠标停在计量器上时不会隐藏。",
+      "runAsAdmin": "显示游戏帧率需要此项。每次启动计量器时 Windows 都会询问。",
+      "shareData": "将你所在服务器的野外首领计时和补给委托分享给 a2tools.app，让大家的 A2Tools 保持同步：你地图上的首领、你看到被击杀的首领及其血量，以及每次重置后的委托板。不会发送任何关于你角色的信息。",
+      "pluginAutoUpdate": "计量器启动时，插件更新会在后台自动安装。要求新权限的更新仍会等待你的同意。",
+      "meterAnchor": "行增减时保持不动的计量器边缘。"
+    },
+    "globalHotkeys": "使用快捷键",
+    "hotkeyConsent": {
+      "title": "开启快捷键？",
+      "desktop": "在 Linux 上，由桌面为计量器设置快捷键，桌面可能会请你批准。",
+      "anytime": "你可以随时关闭快捷键。",
+      "confirm": "开启",
+      "cancel": "暂不"
+    },
+    "keybindTaken": "其他程序已在使用这些按键。请换用其他按键。",
+    "keybindShared": "另一个操作使用了这些按键。请换用其他按键。",
+    "keybindUnset": "桌面尚未为此分配按键。请在“桌面快捷键”中设置。",
+    "keybindAssigned": "桌面使用的是 {key}。可在“桌面快捷键”中更改。",
+    "plugins": {
+      "title": "插件",
+      "devMode": "插件开发者模式",
+      "hint": "此处加载的插件未经审核。请只加载你信任的插件。",
+      "add": "加载插件文件夹…",
+      "open": "打开",
+      "remove": "移除",
+      "checkUpdates": "检查更新",
+      "checking": "正在检查…",
+      "upToDate": "所有插件均为最新。",
+      "updated": "已更新：{list}",
+      "updatedFrom": "已从 {version} 更新",
+      "added": "新加载",
+      "intro": "经过审核的插件可在计量器旁添加功能。每个插件只能获得安装时请求的内容。",
+      "installed": "已安装",
+      "none": "尚未安装插件。",
+      "available": "可用",
+      "catalogLoading": "正在加载插件列表…",
+      "catalogEmpty": "所有经过审核的插件均已安装。",
+      "catalogError": "无法加载插件列表：{error}",
+      "offline": "离线版不会下载插件。",
+      "install": "安装",
+      "update": "更新",
+      "updateTo": "更新到 {version}",
+      "downloading": "正在下载…",
+      "installing": "正在安装…",
+      "installDone": "{name} {version} 已安装。",
+      "updatesAvailable": "有可用更新：{list}",
+      "unreviewed": "开发",
+      "by": "作者：{author}",
+      "consentTitle": "安装 {name}？",
+      "consentUpdateTitle": "更新 {name}？",
+      "consentIntro": "它将能够：",
+      "consentNew": "新版本还请求：",
+      "consentNetwork": "与任何网页一样，插件可能可以访问互联网。",
+      "consentCancel": "取消",
+      "permStorage": "在此电脑上保存自己的数据",
+      "permNotify": "在自己的窗口中显示简短消息",
+      "permWindow": "显示和隐藏自己的窗口，不会抢走游戏的焦点",
+      "permWidgets": "显示可随意移动并锁定位置的小窗口",
+      "permBossTimers": "读取玩家通过 a2tools.app 分享的野外首领计时",
+      "permCharacter": "查看你角色的名称、服务器、职业和等级",
+      "permDecoder": "读取选定的游戏数据（可能包含其他玩家的信息）：{name}",
+      "permNone": "除显示窗口外不做其他事",
+      "enabled": "启用",
+      "enabledTip": "开启：随计量器启动。关闭：保持安装，但不运行。",
+      "showMeter": "显示统计",
+      "hideClosed": "AION2 关闭时隐藏",
+      "hideUnfocused": "AION2 不在前台时隐藏",
+      "inDock": "放入插件停靠栏（关闭：单独窗口）",
+      "search": "搜索",
+      "noMatch": "没有匹配的插件。",
+      "permsTitle": "可以:",
+      "permFps": "显示游戏帧率（在 Windows 上，计量器会为此请求以管理员身份运行）",
+      "permDeathRecap": "被玩家击杀后：对方是谁，以及对你造成的伤害",
+      "permScreenshot": "截取自身窗口的截图，到剪贴板和你的截图文件夹",
+      "testHint": "任何人都可以试用的早期版本，和其他插件一样经过签名。它们可能会变化或还不完善：发现问题请告诉我们。",
+      "testTitle": "测试插件",
+      "autoUpdate": "自动更新插件",
+      "whatsNew": "{version} 的新内容"
+    },
+    "clearOnZone": {
+      "label": "清空统计",
+      "options": {
+        "instance": "进出副本时",
+        "any": "每次切换区域时",
+        "never": "从不（保留上一场战斗）"
+      }
+    },
+    "runAsAdmin": "以管理员身份运行",
+    "runAsAdminTitle": "A2Tools - 以管理员身份运行",
+    "runAsAdminAsk": "显示游戏帧率需要计量器以管理员身份运行。\n\n现在以管理员身份重启计量器吗？每次启动计量器时 Windows 都会询问。你可以在设置中关闭此项。",
+    "shareData": "将有用的数据同步到 A2Tools",
+    "meterAnchor": {
+      "label": "计量器固定在",
+      "options": {
+        "top": "顶部",
+        "middle": "中间",
+        "bottom": "底部"
+      }
     }
   },
   "support": {
     "button": "支持我一下",
     "title": "在爱发电支持作者",
+    "linksHint": "Ko-fi、Patreon、爱发电和 PayPal 会在浏览器中打开其网站；加密货币按钮会复制地址。",
+    "perks": "每赞助 $5 可获得 12 个月的赞助者福利，单笔最多 2 年。请在 Ko-fi 留言中填入 A2 Tools 账号页面上的代码，或在 Patreon 使用相同的电子邮件。",
     "titleWechat": "在微信支持作者",
     "label": {
       "wechat": "微信"
@@ -311,24 +784,34 @@
     "aria": {
       "afdian": "打开爱发电",
       "kofi": "打开 Ko-fi",
+      "patreon": "打开 Patreon",
       "close": "关闭支持弹窗",
       "wechat": "显示微信二维码",
       "paypal": "打开 PayPal",
       "btc": "复制 BTC 地址",
       "eth": "复制 ETH 地址",
       "usdc": "复制 USDC 地址"
-    }
+    },
+    "sponsorLabel": "赞助",
+    "sponsorShort": "用 ExitLag 降低延迟",
+    "sponsorCode": "使用代码",
+    "sponsorDisclosure": "联盟链接。若你订阅，A2 Tools 会获得佣金，这有助于让这些工具保持免费。",
+    "more": "在 a2tools.app 查看更多赞助方式"
   },
   "battleTime": {
-    "analysing": "正在监控数据...",
+    "analysing": "监控中",
+    "ttkTooltip": "根据首领剩余生命值和队伍伤害估算的整场战斗时长",
     "idle": "空闲",
-    "notRunning": "AION2 not running",
-    "suspended": "应用已暂停",
+    "notRunning": "AION2 未运行",
+    "suspended": "已暂停",
     "waitingBoss": "等待首领"
   },
   "meter": {
     "identifyingPlayer": "#{id}",
-    "dpsSuffix": "/秒"
+    "a2toolsUser": "使用 A2Tools",
+    "dpsSuffix": "/秒",
+    "others": "其他",
+    "deaths": "本场战斗中死亡 {count} 次"
   },
   "skills": {
     "fallback": "技能 {code}",
@@ -346,7 +829,7 @@
   },
   "connection": {
     "auto": "自动",
-    "detecting": "Detecting AION2 connection...",
+    "detecting": "连接中...",
     "loopback": "本地回环"
   },
   "target": {
@@ -376,6 +859,8 @@
   },
   "presence": {
     "level": "Lv {level}",
+    "combatPower": "战斗力 {cp}",
+    "gearScore": "装备分数 {gs}",
     "fighting": "正在挑战 {boss}",
     "inGame": "游戏中",
     "elyos": "天族",
@@ -385,6 +870,11 @@
     "tierExpedition": "远征",
     "tierConquestNormal": "征服（普通）",
     "tierConquestHard": "征服（困难）"
+  },
+  "partyPromo": {
+    "title": "新功能：看见队伍中的 A2Tools 用户",
+    "text": "同样使用 A2Tools 的队友名字旁会出现小小的 A2 标记，他们的计量器上你的名字旁也会有。",
+    "hint": "队伍中任何使用 A2Tools 的人都能看出你使用第三方计量器。只会发送角色名称与服务器的哈希值。可随时在设置中更改。"
   },
   "discordPromo": {
     "title": "新功能：Discord 状态显示",
@@ -399,6 +889,88 @@
     "hint": "其他玩家的名称会被遮蔽，训练假人的战斗不会上传。可随时在设置中更改。",
     "signIn": "登录",
     "later": "以后再说",
-    "close": "关闭"
+    "close": "关闭",
+    "guest": "不使用账号",
+    "guestHint": "没有账号？战斗仍可上传，之后登录即归你所有。"
+  },
+  "npcapPrompt": {
+    "ask": "A2Tools DPS Meter 需要 Npcap 来读取游戏的网络流量，但 Npcap 未安装或无法使用。\n\n现在安装吗？本工具会从 npcap.com 下载 Npcap 安装程序并打开它。Npcap 安装完成后，本工具会自动开始捕获。\n\n选择“否”可自行从 https://npcap.com/#download 安装。",
+    "downloadFailed": "无法下载 Npcap 安装程序（{error}）。\n\n请自行从 https://npcap.com/#download 安装，然后重新打开本工具。",
+    "stillMissing": "Npcap 仍然无法使用。如果安装程序在完成前被关闭，请从 https://npcap.com/#download 安装 Npcap，然后重新打开本工具。"
+  },
+  "pluginUpdatePrompt": {
+    "title": "A2Tools - 插件更新",
+    "one": "有一个插件更新可用：",
+    "many": "有插件更新可用：",
+    "alsoAsks": "新版本还要求：",
+    "updateNow": "现在更新吗？",
+    "failed": "无法更新："
+  },
+  "pluginDock": {
+    "tabs": "以标签页显示插件",
+    "stack": "堆叠显示插件",
+    "fold": "收起停靠栏",
+    "unfold": "展开停靠栏",
+    "hideControls": "隐藏控件",
+    "showControls": "显示控件",
+    "popOut": "在单独窗口中打开",
+    "pluginSettings": "插件设置",
+    "hide": "隐藏（插件继续运行）",
+    "close": "隐藏停靠栏（插件继续运行）",
+    "hideMeter": "隐藏 DPS 计量器",
+    "showMeter": "显示 DPS 计量器",
+    "settings": "计量器设置",
+    "opacity": "背景不透明度",
+    "failed": "此插件无法启动：{error}"
+  },
+  "sharing": {
+    "title": "帮忙建立排行榜吗？",
+    "sub": "选一项开始。随时可在 设置 → 隐私 中更改。",
+    "shareTitle": "匿名分享战斗",
+    "recommended": "推荐",
+    "shareText": "你的首领战会加入 a2tools.app 的公开记录，所有名字都会隐藏。无需账号。",
+    "noTitle": "不分享",
+    "noText": "你的战斗信息不会离开这台电脑。",
+    "signInBefore": "想用自己的名字上传战斗？",
+    "signIn": "登录 A2 Tools",
+    "signInAfter": "之前分享的战斗会转入你的账号。",
+    "previewTitle": "分享的战斗在 a2tools.app 上的样子",
+    "never": "绝不会发送电脑名称和角色的完整名字。",
+    "policy": "隐私政策",
+    "continue": "继续"
+  },
+  "sharingNotice": {
+    "title": "你的战斗正在帮忙建立排行榜",
+    "text": "你完成的首领战会分享到 a2tools.app，所有名字都会隐藏，包括你的（例如 Na***a）。无需账号，随时可在 设置 → 隐私 中停止。",
+    "stop": "停止分享",
+    "details": "详情",
+    "keep": "继续分享",
+    "stopped": "已停止分享。之前分享的战斗正在从 a2tools.app 删除。"
+  },
+  "privacy": {
+    "title": "隐私",
+    "intro": "本计量器与 a2tools.app 分享的内容。每一项都由你决定。",
+    "share": "匿名分享首领战",
+    "shareHint": "首领战结束后会加入 a2tools.app 的公开记录和排行榜。所有名字都会隐藏，包括你的。无需账号。",
+    "signedIn": "已登录：首领战会上传到你的 A2 Tools 账号（见 A2 Tools 账号）。",
+    "never": "绝不发送：聊天、电脑名称、角色的完整名字。“发送日志给开发者”（高级）只在你按下时才发送。",
+    "policy": "完整隐私政策"
+  },
+  "changelog": {
+    "title": "新功能",
+    "intro": "最近的版本，最新的在前。",
+    "allReleases": "在 GitHub 查看所有版本",
+    "installed": "已安装",
+    "available": "有可用更新",
+    "loading": "正在加载更新说明…",
+    "none": "尚无更新说明。",
+    "failed": "无法加载更新说明。也可以在下方的 GitHub 查看。"
+  },
+  "footerMenu": {
+    "tip": "选择底栏显示的项目",
+    "ttk": "预计击杀时间",
+    "partyTotal": "队伍总计",
+    "odyle": "奥德能量",
+    "ping": "延迟"
   }
 }

@@ -1,0 +1,10 @@
+{
+  "id": "escape-probe",
+  "name": "Escape Probe",
+  "version": "0.0.1",
+  "apiVersion": 2,
+  "author": "A2 Tools",
+  "description": "Dev only: checks whether a plugin page can reach the app's IPC (audit H2).",
+  "permissions": ["storage"],
+  "ui": { "panel": { "width": 520, "height": 420 } }
+}

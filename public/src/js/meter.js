@@ -1,3 +1,57 @@
+// The figure beside a player's name, in the meter and in Details: combat
+// power in thousands the way players quote it ("889k"; below 500 the raw
+// number, since "0k" says nothing), gear score in full, or both ("889k ·
+// 2,410"). Empty when the party roster never named the player: only your own
+// party's members are on it. Shared with details.js, which loads after this
+// file.
+const partyStatText = (row, stat) => {
+  if (stat === "off") return "";
+  const gearScore = Number(row?.gearScore) || 0;
+  const gearScoreText = gearScore > 0 ? gearScore.toLocaleString() : "";
+  if (stat === "gearScore") return gearScoreText;
+  const combatPower = Number(row?.combatPower) || 0;
+  const thousands = Math.round(combatPower / 1000);
+  const combatPowerText =
+    combatPower <= 0 ? "" : thousands > 0 ? `${thousands.toLocaleString()}k` : combatPower.toLocaleString();
+  if (stat === "both") return [combatPowerText, gearScoreText].filter(Boolean).join(" · ");
+  return combatPowerText;
+};
+
+// A row's texture offset, 0-719px, the same every time for the same id.
+const textureOffsetFor = (id) => {
+  let hash = 2166136261;
+  for (const ch of String(id)) hash = Math.imul(hash ^ ch.charCodeAt(0), 16777619);
+  return (hash >>> 0) % 720;
+};
+
+// Whether a bar colour is bright (gold, yellow, pale): a supporter's gold name
+// gets a firmer edge there (styles.css .onBright). The colour is the bar's
+// --bar as the theme resolves it, read through a canvas so any CSS colour
+// works; remembered per colour.
+const brightBars = new Map();
+let colorProbe = null;
+const isBrightColor = (value) => {
+  const key = String(value || "").trim();
+  if (!key) return false;
+  if (brightBars.has(key)) return brightBars.get(key);
+  let bright = false;
+  try {
+    colorProbe ||= document.createElement("canvas").getContext("2d");
+    colorProbe.fillStyle = "#000";
+    colorProbe.fillStyle = key;
+    colorProbe.fillRect(0, 0, 1, 1);
+    const [r, g, b] = colorProbe.getImageData(0, 0, 1, 1).data;
+    const lin = (c) => ((c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    bright = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b) > 0.3;
+  } catch {}
+  brightBars.set(key, bright);
+  return bright;
+};
+
+// The smallest change of a bar's length (share of the row) that glides;
+// smaller ones jump there (see renderRows).
+const GLIDE_MIN_JUMP = 0.03;
+
 const createMeterUI = ({
   elList,
   dpsFormatter,
@@ -9,6 +63,8 @@ const createMeterUI = ({
   getSortDirection,
   getPinUserToTop,
   getPlayerLimit,
+  getPartyStat,
+  getJobColor,
 }) => {
   const MAX_CACHE = 32;
   const cjkRegex = /[\u3400-\u9FFF\uF900-\uFAFF]/;
@@ -21,11 +77,20 @@ const createMeterUI = ({
 
   const nowMs = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
+  // Forget what each row last drew, so the next refresh redraws it (the
+  // party stat setting changed).
+  const invalidateRows = () => {
+    for (const view of rowViewById.values()) view.lastCombatPowerText = undefined;
+  };
+
   const createRowView = (id) => {
     const rowEl = document.createElement("div");
     rowEl.className = "item";
     rowEl.style.display = "none";
     rowEl.dataset.rowId = String(id);
+    // Where this row's bar texture starts with "Offset textures" on: a place
+    // of its own, from its id, so it stays put as rows change places.
+    rowEl.style.setProperty("--tex-x", `${-textureOffsetFor(id)}px`);
 
     // The bar spans the full row, so 100% reads as 100%. The readout keeps
     // its own scrim (see .dps in styles.css) for where the bar passes behind.
@@ -67,12 +132,26 @@ const createMeterUI = ({
     supporterBadgeEl.style.display = "none";
     supporterBadgeEl.setAttribute("aria-hidden", "true");
     supporterBadgeEl.innerHTML =
-      '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" ' +
-      'aria-hidden="true"><path d="M3 7l4.2 3L12 4l4.8 6L21 7l-1.8 10H4.8L3 7z"/>' +
-      '</svg>';
+      '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" stroke="rgba(28,16,0,0.9)" ' +
+      'stroke-width="1.3" stroke-linejoin="round" paint-order="stroke" aria-hidden="true">' +
+      '<path d="M3 9l4.6 3.4L12 6l4.4 6.4L21 9l-1.9 8.6H4.9z"/><rect x="4.6" y="18.6" width="14.8" height="2.4" rx="0.6"/>' +
+      '<circle cx="3" cy="8.4" r="1.7"/><circle cx="12" cy="5" r="1.9"/><circle cx="21" cy="8.4" r="1.7"/></svg>';
+
+    // A party member who runs A2Tools too (party_presence.rs): a small tag.
+    const a2toolsBadgeEl = document.createElement("span");
+    a2toolsBadgeEl.className = "a2toolsBadge";
+    a2toolsBadgeEl.style.display = "none";
+    a2toolsBadgeEl.textContent = "A2";
+    a2toolsBadgeEl.title = window.i18n?.t?.("meter.a2toolsUser", "Uses A2Tools") ?? "Uses A2Tools";
 
     // Party combat power, shown beside the name. Hidden unless the party roster
     // packet supplied a value for this player.
+    // Deaths in the fight, a small badge after the name and its figure (shown
+    // once above 0): its own element, so a long name's ellipsis never hides it.
+    const deathCountEl = document.createElement("span");
+    deathCountEl.className = "deathCount";
+    deathCountEl.style.display = "none";
+
     const combatPowerEl = document.createElement("span");
     combatPowerEl.className = "combatPower";
     combatPowerEl.style.display = "none";
@@ -82,15 +161,22 @@ const createMeterUI = ({
     dpsContainer.className = "dps";
     const dpsContribution = document.createElement("p");
     dpsContribution.className = "dpsContribution";
+    // The extra metrics ticked in the metric menu, after the main figure.
+    const dpsExtra = document.createElement("p");
+    dpsExtra.className = "dpsExtra";
+    dpsExtra.style.display = "none";
 
     dpsContainer.appendChild(dpsNumber);
+    dpsContainer.appendChild(dpsExtra);
     dpsContainer.appendChild(dpsContribution);
 
     contentEl.appendChild(rankEl);
     contentEl.appendChild(classIconEl);
     contentEl.appendChild(nameEl);
     contentEl.appendChild(supporterBadgeEl);
+    contentEl.appendChild(a2toolsBadgeEl);
     contentEl.appendChild(combatPowerEl);
+    contentEl.appendChild(deathCountEl);
     contentEl.appendChild(dpsContainer);
     rowEl.appendChild(fillTrackEl);
     rowEl.appendChild(contentEl);
@@ -101,12 +187,14 @@ const createMeterUI = ({
       prevContribClass: "",
       nameEl,
       supporterBadgeEl,
+      a2toolsBadgeEl,
       combatPowerEl,
       rankEl,
       dpsContainer,
       classIconEl,
       classIconImg,
       dpsNumber,
+      dpsExtra,
       dpsContribution,
       fillEl,
       currentRow: null,
@@ -114,9 +202,12 @@ const createMeterUI = ({
       isVisible: false,
       lastNameText: "",
       lastCombatPowerText: "",
+      deathCountEl,
+      lastDeaths: 0,
       lastIsCjk: false,
       lastIsSupporter: false,
       lastMetricText: "",
+      lastExtraText: "",
       lastContributionText: "",
       lastRankText: "",
       lastFillRatio: -1,
@@ -144,8 +235,7 @@ const createMeterUI = ({
 
 
     rowEl.addEventListener("mousemove", (event) => {
-      if (view._lastMoveMs && nowMs() - view._lastMoveMs < 100) return;
-      view._lastMoveMs = nowMs();
+      // The tooltip coalesces pointer events into one update per display frame.
       onHoverUserRow?.(view.currentRow, event);
     });
     rowEl.addEventListener("mouseleave", () => {
@@ -222,6 +312,9 @@ const createMeterUI = ({
   };
 
   let lastOrderKey = "";
+  // Each metric's widest figure on the rows, in characters, so the same
+  // metric lines up down the rows (styles.css --mw-<metric>).
+  const columnWidths = new Map();
 
   const renderRows = (rows, rankById) => {
     const now = nowMs();
@@ -253,13 +346,24 @@ const createMeterUI = ({
 
     const needsReorder = orderKey !== lastOrderKey;
     lastOrderKey = orderKey;
+    const widest = new Map();
+    const widen = (mode, text) => {
+      if (mode) widest.set(mode, Math.max(widest.get(mode) || 0, String(text).length));
+    };
 
-    for (const { row, id } of validRows) {
+    for (const [pos, { row, id }] of validRows.entries()) {
       nextVisibleIds.add(id);
 
       const view = getRowView(id);
       view.currentRow = row;
       view.lastSeenAt = now;
+
+      // The row's place from the top, for themes that colour bars by it
+      // (Spectrum, Aurora in styles.css).
+      if (view.lastPos !== pos) {
+        view.rowEl.style.setProperty("--row-pos", String(pos));
+        view.lastPos = pos;
+      }
 
       if (!view.isVisible) {
         view.rowEl.style.display = "";
@@ -270,6 +374,12 @@ const createMeterUI = ({
       if (view.lastIsUser !== isUser) {
         view.rowEl.classList.toggle("isUser", isUser);
         view.lastIsUser = isUser;
+      }
+
+      const isOthers = !!row.isOthers;
+      if (view.lastIsOthers !== isOthers) {
+        view.rowEl.classList.toggle("isOthers", isOthers);
+        view.lastIsOthers = isOthers;
       }
 
       const isIdentifying = !!row.isIdentifying;
@@ -295,8 +405,15 @@ const createMeterUI = ({
       const isSupporter = !!row.isSupporter;
       if (view.lastIsSupporter !== isSupporter) {
         view.nameEl.classList.toggle("isSupporter", isSupporter);
+        view.rowEl.classList.toggle("isSupporterRow", isSupporter);
         view.supporterBadgeEl.style.display = isSupporter ? "inline-flex" : "none";
         view.lastIsSupporter = isSupporter;
+      }
+
+      const usesA2tools = !!row.usesA2tools && !row.isUser;
+      if (view.lastUsesA2tools !== usesA2tools) {
+        view.a2toolsBadgeEl.style.display = usesA2tools ? "inline-flex" : "none";
+        view.lastUsesA2tools = usesA2tools;
       }
 
       if (view.lastIsCjk !== isCjk) {
@@ -304,26 +421,46 @@ const createMeterUI = ({
         view.lastIsCjk = isCjk;
       }
 
-      // Combat power sits beside the name, abbreviated to thousands the way
-      // players quote it — 889,100 reads as "889k", 889,545 as "890k". The
-      // exact figure stays on the row for the details panel. Below 500 the
-      // abbreviation would collapse to "0k", so show the raw number there.
-      const combatPower = Number(row.combatPower) || 0;
-      const combatPowerK = Math.round(combatPower / 1000);
-      const combatPowerText =
-        combatPower <= 0
-          ? ""
-          : combatPowerK > 0
-            ? `${combatPowerK.toLocaleString()}k`
-            : combatPower.toLocaleString();
+      // Beside the name: combat power or gear score, as Settings → Meter
+      // Settings says (partyStatText, above).
+      const combatPowerText = partyStatText(row, getPartyStat?.());
       if (view.lastCombatPowerText !== combatPowerText) {
         view.combatPowerEl.textContent = combatPowerText;
         view.combatPowerEl.style.display = combatPowerText ? "" : "none";
         view.lastCombatPowerText = combatPowerText;
       }
+      const deaths = Math.max(0, Number(row.deaths) || 0);
+      if (view.lastDeaths !== deaths) {
+        view.deathCountEl.textContent = deaths ? String(deaths) : "";
+        view.deathCountEl.style.display = deaths ? "" : "none";
+        view.deathCountEl.title = deaths
+          ? window.i18n?.format?.("meter.deaths", { count: deaths }, `Died ${deaths} times in this fight`) ??
+            `Died ${deaths} times in this fight`
+          : "";
+        view.lastDeaths = deaths;
+      }
 
       // "Unknown" is a row whose class is not known yet: no icon, rather than
       // a broken image of a file that does not exist (issue #9).
+      // The class's colour, for a theme that colours each bar by class
+      // ("AION2 (class colours)"); the others leave it unused.
+      const classColor = (row.job && getJobColor?.(row.job)) || "";
+      if (view.lastClassColor !== classColor) {
+        if (classColor) view.rowEl.style.setProperty("--class-fill", classColor);
+        else view.rowEl.style.removeProperty("--class-fill");
+        view.lastClassColor = classColor;
+      }
+      // A supporter's name on a bright bar: a firmer edge. Looked at again only
+      // when what decides the bar's colour changes (theme, class, own row).
+      const barKey = isSupporter
+        ? `${document.documentElement.dataset.theme || ""}|${row.job || ""}|${!!row.isUser}`
+        : "";
+      if (view.lastBarKey !== barKey) {
+        view.lastBarKey = barKey;
+        const bright = !!barKey && isBrightColor(getComputedStyle(view.fillEl).getPropertyValue("--bar"));
+        view.nameEl.classList.toggle("onBright", bright);
+      }
+
       if (row.job && row.job !== "Unknown") {
         if (!classIconSrcByJob.has(row.job)) {
           classIconSrcByJob.set(row.job, `./assets/${row.job}.png`);
@@ -372,6 +509,25 @@ const createMeterUI = ({
         view.dpsNumber.textContent = metricText;
         view.lastMetricText = metricText;
       }
+      // Each metric in its own colour (data-metric, styles.css).
+      const metricMode = metric.mode || "";
+      widen(metricMode, metricText);
+      if (view.dpsNumber.dataset.metric !== metricMode) view.dpsNumber.dataset.metric = metricMode;
+      const extras = Array.isArray(metric.extras) ? metric.extras : [];
+      for (const e of extras) widen(e.mode, e.text);
+      const extraText = extras.map((e) => `${e.mode}:${e.text}`).join("|");
+      if (view.lastExtraText !== extraText) {
+        view.dpsExtra.replaceChildren(
+          ...extras.map((e) => {
+            const span = document.createElement("span");
+            span.dataset.metric = e.mode;
+            span.textContent = e.text;
+            return span;
+          }),
+        );
+        view.dpsExtra.style.display = extraText ? "" : "none";
+        view.lastExtraText = extraText;
+      }
 
       const contributionText = `${damageContribution.toFixed(1)}%`;
       if (view.lastContributionText !== contributionText) {
@@ -392,6 +548,12 @@ const createMeterUI = ({
         // 2px child, and a scaled parent would squash it (and its glow) by
         // the fill ratio. Six absolutely-positioned rows, rAF-throttled, so
         // the layout cost is not measurable.
+        // It glides only when the change shows: each glide step re-lays and
+        // repaints the bar (its texture too), and in a steady fight most
+        // updates move it by a hair, so gliding them all kept every bar
+        // animating, about half the meter's drawing (2026-10-29).
+        const jump = Math.abs(ratio - (view.lastFillRatio ?? 0));
+        view.fillEl.classList.toggle("noGlide", jump < GLIDE_MIN_JUMP);
         view.fillEl.style.width = `${(ratio * 100).toFixed(2)}%`;
         view.lastFillRatio = ratio;
       }
@@ -412,6 +574,13 @@ const createMeterUI = ({
     }
 
     lastVisibleIds = nextVisibleIds;
+
+    // Set only when a column's widest figure changed length.
+    for (const [mode, chars] of widest) {
+      if (columnWidths.get(mode) === chars) continue;
+      columnWidths.set(mode, chars);
+      elList.style.setProperty(`--mw-${mode}`, `${chars}ch`);
+    }
 
     pruneCache(nextVisibleIds);
   };
@@ -476,5 +645,5 @@ const createMeterUI = ({
     return view?.currentRow || null;
   };
 
-  return { updateFromRows, onResetMeterUi, getRowById };
+  return { updateFromRows, onResetMeterUi, getRowById, invalidateRows };
 };

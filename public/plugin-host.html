@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Plugin</title>
+    <link rel="stylesheet" href="/src/js/pluginHost.css" />
+  </head>
+  <body>
+    <header class="pluginBar">
+      <span class="pluginName"></span>
+      <input type="range" class="pluginOpacity" min="20" max="100" step="5" value="100" aria-label="Background opacity" title="Background opacity" />
+      <button type="button" class="pluginMeter" aria-label="Hide the DPS meter" title="Hide the DPS meter" aria-pressed="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 16V11"/><path d="M12 16V7"/><path d="M17 16v-3"/></svg>
+      </button>
+      <button type="button" class="pluginSettings" aria-label="Meter settings" title="Meter settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg>
+      </button>
+      <button type="button" class="pluginDock" aria-label="Put it in the plugin dock" title="Put it in the plugin dock">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 9v12"/></svg>
+      </button>
+      <button type="button" class="pluginCompact" aria-label="Hide the controls" title="Hide the controls" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg>
+      </button>
+      <button type="button" class="pluginClose" aria-label="Hide (the plugin keeps running)" title="Hide (the plugin keeps running)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </header>
+    <main class="pluginStage"></main>
+    <div class="pluginToast" role="status" hidden></div>
+    <script src="/src/js/pluginFrame.js"></script>
+    <script src="/src/js/pluginHost.js"></script>
+  </body>
+</html>

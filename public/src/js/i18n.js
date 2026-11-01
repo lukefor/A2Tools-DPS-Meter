@@ -6,9 +6,15 @@ const createI18n = ({
   ],
 } = {}) => {
   let currentLanguage = defaultLanguage;
+  let loadedLanguage = null;
+  let pendingLoad = null;
+  let languageRequest = 0;
   let uiStrings = {};
   let skillStrings = {};
   let npcStrings = {};
+  // Instances whose bosses carry levels of their own (getNpcLevel); built on
+  // first use from the NPC table.
+  let multiTierDungeons = null;
   let dungeonStrings = {};
   const listeners = new Set();
 
@@ -165,6 +171,25 @@ const createI18n = ({
     return fallback;
   };
 
+  // A boss's own level, in the table's language ("Level 2", "2단계"), when
+  // its instance has several: Nightmare is one instance whose bosses come in
+  // ten levels, a code each (Gatekeeper Pinopi 2980040-2980049). Elsewhere a
+  // boss's tier is the instance's, which the dungeon label already says.
+  const getNpcLevel = (id) => {
+    const npc = npcStrings?.[String(id)];
+    if (!npc || typeof npc !== "object" || !npc.tier || !npc.dungeonId) return "";
+    if (!multiTierDungeons) {
+      const tiers = new Map();
+      for (const value of Object.values(npcStrings || {})) {
+        if (!value || typeof value !== "object" || !value.tier || !value.dungeonId) continue;
+        if (!tiers.has(value.dungeonId)) tiers.set(value.dungeonId, new Set());
+        tiers.get(value.dungeonId).add(value.tier);
+      }
+      multiTierDungeons = new Set([...tiers].filter(([, set]) => set.size > 1).map(([d]) => d));
+    }
+    return multiTierDungeons.has(npc.dungeonId) ? String(npc.tier) : "";
+  };
+
   const applyTranslations = () => {
     document.querySelectorAll("[data-i18n]").forEach((el) => {
       const key = el.dataset.i18n;
@@ -198,6 +223,14 @@ const createI18n = ({
     });
   };
 
+  const applyLanguage = () => {
+    document.documentElement.setAttribute("lang", currentLanguage);
+    applyTranslations();
+    listeners.forEach((listener) => listener(currentLanguage));
+  };
+
+  // getLanguage() reports the requested language at once; the latest request
+  // wins when an older dictionary load finishes after it.
   const setLanguage = async (lang, { persist = true } = {}) => {
     const next = normalizeLanguage(lang || defaultLanguage);
     currentLanguage = next;
@@ -206,25 +239,64 @@ const createI18n = ({
       safeSetStorage(storageKey, next);
     }
 
+    if (pendingLoad?.language === next) return pendingLoad.promise;
+    const request = ++languageRequest;
+    pendingLoad = null;
+    if (loadedLanguage === next) {
+      // Same language: re-apply to the current DOM without reloading.
+      applyLanguage();
+      return;
+    }
     const localized = async (kind) => {
       const strings = await loadJson(`./i18n/${kind}/${next}.json`);
       return Object.keys(strings).length || next === "en"
         ? strings : loadJson(`./i18n/${kind}/en.json`);
     };
-    const [ui, skills, npcs, dungeons] = await Promise.all([
-      localized("ui"), localized("skills"), localized("npcs"), localized("dungeons"),
-    ]);
+    // Settings has no combat names. Do not put the megabyte-sized game
+    // dictionaries (or missing dungeon-locale fallbacks) on its startup path.
+    const uiOnly = window.A2_VIEW === "settings";
+    const promise = Promise.all([
+      localized("ui"),
+      uiOnly ? {} : localized("skills"),
+      uiOnly ? {} : localized("npcs"),
+      uiOnly ? {} : localized("dungeons"),
+    ]).then(([ui, skills, npcs, dungeons]) => {
+      if (request !== languageRequest) return;
+      pendingLoad = null;
+      loadedLanguage = next;
+      uiStrings = ui || {};
+      skillStrings = skills || {};
+      npcStrings = npcs || {};
+      multiTierDungeons = null;
+      dungeonStrings = dungeons || {};
+      applyLanguage();
+    }, (error) => {
+      if (request === languageRequest) pendingLoad = null;
+      throw error;
+    });
+    pendingLoad = { language: next, promise };
+    return promise;
+  };
 
-    uiStrings = ui || {};
-    skillStrings = skills || {};
-    npcStrings = npcs || {};
-    dungeonStrings = dungeons || {};
-    document.documentElement.setAttribute("lang", currentLanguage);
-    applyTranslations();
-    listeners.forEach((listener) => listener(currentLanguage));
+  // Buff and debuff names (i18n/abnormals), loaded the first time Details
+  // shows buffs, not at startup. There are none in Chinese: those read the
+  // English ones, and say so (`native: false`) so a caller can prefer the
+  // applying skill's Chinese name.
+  const ABNORMAL_LANGUAGES = ["de", "en", "es", "fr", "ja", "ko", "pt", "ru"];
+  const abnormalLoads = new Map();
+  const loadAbnormalNames = () => {
+    const native = ABNORMAL_LANGUAGES.includes(currentLanguage);
+    const lang = native ? currentLanguage : "en";
+    if (!abnormalLoads.has(lang)) {
+      abnormalLoads.set(lang, loadJson(`./i18n/abnormals/${lang}.json`).then((names) =>
+        Object.keys(names).length || lang === "en" ? names : loadJson("./i18n/abnormals/en.json")));
+    }
+    return abnormalLoads.get(lang).then((names) => ({ names, native }));
   };
 
   const init = async () => {
+    // The backend preference wins over stale localStorage on a newly opened window.
+    if (window.A2_VIEW === "settings") await window.a2SettingsReady;
     const stored = safeGetStorage(storageKey);
     await setLanguage(stored || defaultLanguage, { persist: false });
   };
@@ -258,6 +330,19 @@ const createI18n = ({
 
   // "Ferocious Horn Den (Hard)" for the instance the party roster reports, or
   // the name alone where the tier is not known.
+  // The dungeon's name alone, or "" when the table has no entry for the id.
+  const getDungeonName = (dungeonId) => {
+    const entry = dungeonStrings?.[String(Number(dungeonId) || 0)];
+    return entry?.name ? String(entry.name) : "";
+  };
+
+  // The category the NPC table gives a boss ("Nightmare"), for instances the
+  // dungeon table does not name.
+  const getNpcCategory = (id) => {
+    const npc = npcStrings?.[String(id)];
+    return npc && typeof npc === "object" && npc.category ? String(npc.category) : "";
+  };
+
   const getDungeonLabel = (dungeonId) => {
     const entry = dungeonStrings?.[String(dungeonId)];
     if (!entry || !entry.name) return "";
@@ -272,7 +357,11 @@ const createI18n = ({
     format,
     getSkillName,
     getNpcName,
+    getNpcLevel,
+    loadAbnormalNames,
     getDungeonLabel,
+    getDungeonName,
+    getNpcCategory,
     getDungeonDifficulty,
     getLanguage: () => currentLanguage,
     onChange,

@@ -9,8 +9,9 @@
 //!
 //! - `<fight>.a2es` — the Evidence Slice, the packets themselves. See
 //!   `capture::evidence_slice`.
-//! - `<fight>.a2es.gz` — the same thing, gzipped: byte for byte what an upload
-//!   would put on the wire. Both are written because the compressed one is what
+//! - `<fight>.a2es.gz` — the same thing, gzipped: what an upload would put on
+//!   the wire, except the name tokens, which every cut draws with its own key.
+//!   Both are written because the compressed one is what
 //!   gets sent and the uncompressed one is what is easy to check, and making
 //!   people choose between those would defeat the point. (`a2t-inspect` reads
 //!   either.)
@@ -23,9 +24,11 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Weak};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -155,11 +158,23 @@ fn decode_hex(hex: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Compress an encoded Evidence Slice for upload: zstd at level 19.
+///
+/// Measured on real fights (2026-10-16): with bundles stored unpacked (slice
+/// version 3) it is 37% smaller than the gzipped version 2 slice, and the log
+/// service decompresses it twice as fast. It costs about 0.7 s of CPU here per
+/// fight, once, off the UI. The log service tells zstd from an older gzipped
+/// slice by its magic bytes, so slices saved before this still upload.
+pub fn compress_slice(data: &[u8]) -> Result<Vec<u8>, String> {
+    zstd::bulk::compress(data, 19).map_err(|e| e.to_string())
+}
+
 /// Gzip a buffer.
 ///
 /// Worth doing even though a slice already holds LZ4-compressed bundles: the
 /// framing, the repeated opcodes and the hex-free binary still compress about
-/// 2.2x, measured on the reference run (467 KB -> 212 KB). For a diagnostic
+/// 2.2x, measured on the reference run (467 KB -> 212 KB). Slices now go
+/// through `compress_slice`; this is for diagnostic captures. For a diagnostic
 /// capture, which is ASCII hex, it is closer to 3x — the difference between an
 /// 8 MB upload and a 2.8 MB one, and the reason a size limit can be generous.
 pub fn gzip(data: &[u8]) -> Result<Vec<u8>, String> {
@@ -364,10 +379,18 @@ pub fn slice_for(
     packets.sort_by_key(|p| p.captured_at_ms);
 
     let names = resolve_names(&packets);
-    let mut slice = evidence_slice::build(&packets, start, end, &names).map_err(|e| e.to_string())?;
+    let mut slice = evidence_slice::build(&packets, start, end, &names, slice_key()?).map_err(|e| e.to_string())?;
     without_roster_ids(&mut slice);
     let encoded = evidence_slice::encode(&slice);
     Ok((encoded, slice, sources))
+}
+
+/// A fresh key for one slice's tokens, from the OS random source. No fallback:
+/// a guessable key would bring back the name test it is there to stop.
+fn slice_key() -> Result<evidence_slice::SliceKey, String> {
+    let mut key = [0u8; 32];
+    getrandom::fill(&mut key).map_err(|e| format!("no random key for the slice: {e}"))?;
+    Ok(key)
 }
 
 /// Blank the roster ids in a slice's blind table before it is written or sent.
@@ -392,13 +415,15 @@ pub fn preview(
     let envelope = build_envelope(record, &encoded);
     let json = serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
 
-    let compressed = gzip(&encoded)?;
+    let compressed = compress_slice(&encoded)?;
 
     std::fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
-    // Both: the `.a2es` is what `a2t-inspect` reads, the `.gz` is byte for byte
-    // what an upload would put on the wire. Writing only the compressed one
-    // would make the artifact harder to check, which is the opposite of why
-    // this exists.
+    // Both: the `.a2es` is what `a2t-inspect` reads, the `.gz` is what an
+    // upload would put on the wire, cut the same way. Not byte for byte: every
+    // cut blinds names with its own random key (`slice_key`), so an upload's
+    // tokens differ from the preview's; everything else is the same. Writing
+    // only the compressed one would make the artifact harder to check, which
+    // is the opposite of why this exists.
     let slice_path = out_dir.join(format!("{}.a2es", record.id));
     let compressed_path = out_dir.join(format!("{}.a2es.gz", record.id));
     let envelope_path = out_dir.join(format!("{}.upload.json", record.id));
@@ -447,6 +472,7 @@ mod tests {
                 skills: Vec::new(),
                 ping_history: Vec::new(),
                 heal_skills: Vec::new(),
+                deaths: None,
             },
             actors,
             is_train: false,
@@ -454,6 +480,11 @@ mod tests {
             mob_code: 4242,
             dungeon_id: 600093,
             server_id: 0,
+            buffs: None,
+            stagger: None,
+            local_actor_id: None,
+            killed: None,
+            max_hp_from_spawn: None,
         }
     }
 
@@ -467,6 +498,7 @@ mod tests {
             regen: 0,
             damage_received: 0,
             hits_received: 0,
+            received: None,
             dbid,
             server_id: (dbid >> 48) as u16,
             is_supporter: false,
@@ -522,6 +554,7 @@ mod tests {
 
 // ===== slices kept automatically, and uploading them =====
 
+#[cfg(feature = "online")]
 pub mod dev_logs;
 pub mod ring;
 
@@ -564,6 +597,38 @@ pub struct SliceMeta {
     pub gave_up: bool,
 }
 
+/// The real uploader name of each fight this PC uploaded, for a guest's
+/// fights to be named again when the player signs in here: a guest uploads
+/// them masked (`upload_detailed`), and only this PC still knows the names.
+/// `{log, actorId, name}` each, at most `max`; the site applies only those
+/// that were the merged guest's.
+pub fn uploaded_names(app_data_dir: &Path, max: usize) -> Vec<serde_json::Value> {
+    let Ok(dir) = std::fs::read_dir(slices_dir(app_data_dir)) else { return Vec::new() };
+    let history = crate::history::fight_history::FightHistoryManager::new(app_data_dir.to_path_buf());
+    let mut out = Vec::new();
+    for entry in dir.flatten() {
+        if out.len() >= max {
+            break;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(id) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        let meta = read_meta(app_data_dir, id);
+        let (Some(url), Some(actor)) = (meta.url, meta.uploader_actor_id) else { continue };
+        let Some(log) = url.split_once("/logs/").and_then(|(_, rest)| rest.split(['?', '#', '/']).next()).filter(|l| !l.is_empty()) else {
+            continue;
+        };
+        let Ok(record) = history.load_fight(id) else { continue };
+        let Some(name) = record.actors.iter().find(|a| a.actor_id == actor).map(|a| a.nickname.trim().to_string()).filter(|n| !n.is_empty()) else {
+            continue;
+        };
+        out.push(serde_json::json!({ "log": log, "actorId": actor, "name": name.chars().take(32).collect::<String>() }));
+    }
+    out
+}
+
 fn read_meta(app_data_dir: &Path, id: &str) -> SliceMeta {
     std::fs::read_to_string(meta_path(app_data_dir, id))
         .ok()
@@ -573,8 +638,33 @@ fn read_meta(app_data_dir: &Path, id: &str) -> SliceMeta {
 
 fn write_meta(app_data_dir: &Path, id: &str, meta: &SliceMeta) {
     if let Ok(json) = serde_json::to_string(meta) {
-        let _ = std::fs::write(meta_path(app_data_dir, id), json);
+        let _ = crate::atomic_file::write(&meta_path(app_data_dir, id), json.as_bytes());
     }
+}
+
+// Serialize a metadata read/modify/write for its own file, without making
+// unrelated fights or settings wait, and never across a network request.
+static META_LOCKS: LazyLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn update_meta(app_data_dir: &Path, id: &str, update: impl FnOnce(&mut SliceMeta)) {
+    let lock = {
+        let mut locks = META_LOCKS.lock();
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        let entry = locks.entry(meta_path(app_data_dir, id)).or_default();
+        match entry.upgrade() {
+            Some(lock) => lock,
+            None => {
+                let lock = Arc::new(Mutex::new(()));
+                *entry = Arc::downgrade(&lock);
+                lock
+            }
+        }
+    };
+    let _updating = lock.lock();
+    let mut meta = read_meta(app_data_dir, id);
+    update(&mut meta);
+    write_meta(app_data_dir, id, &meta);
 }
 
 /// Every name the meter has resolved, which is what the blinder must remove.
@@ -589,6 +679,25 @@ pub fn names_from(storage: &DataStorage) -> NameMap {
     names
 }
 
+/// What cutting a slice needs from the meter's storage, taken with the
+/// fight's record: a save that runs later, after a combat reset, still
+/// blinds the party's names and names its uploader.
+pub struct SliceNames {
+    names: NameMap,
+    local_id: Option<i64>,
+    local_name: Option<String>,
+}
+
+impl SliceNames {
+    pub fn of(storage: &DataStorage) -> Self {
+        Self {
+            names: names_from(storage),
+            local_id: storage.local_player_id(),
+            local_name: storage.local_character_name(),
+        }
+    }
+}
+
 /// Cut and keep the slice for a fight the meter just saved, from memory.
 ///
 /// Called by the auto-save each time it writes the record, so the slice grows
@@ -598,24 +707,24 @@ pub fn names_from(storage: &DataStorage) -> NameMap {
 pub fn save_slice(
     app_data_dir: &Path,
     record: &FightRecord,
-    storage: &DataStorage,
+    names: &SliceNames,
 ) -> Result<usize, String> {
     let packets = ring::snapshot();
     let start = record.start_time_ms;
     if !covers(&packets, start, start + record.duration_ms) {
         return Err("no packets in memory for this fight".into());
     }
-    let mut slice = evidence_slice::build(&packets, start, start + record.duration_ms, &names_from(storage))
-        .map_err(|e| e.to_string())?;
+    let mut slice =
+        evidence_slice::build(&packets, start, start + record.duration_ms, &names.names, slice_key()?)
+            .map_err(|e| e.to_string())?;
     without_roster_ids(&mut slice);
-    let compressed = gzip(&evidence_slice::encode(&slice))?;
+    let compressed = compress_slice(&evidence_slice::encode(&slice))?;
 
     let dir = slices_dir(app_data_dir);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(slice_path(app_data_dir, &record.id), &compressed).map_err(|e| e.to_string())?;
-    let mut meta = read_meta(app_data_dir, &record.id);
-    meta.uploader_actor_id = uploader_in(record, storage.local_player_id(), storage.local_character_name());
-    write_meta(app_data_dir, &record.id, &meta);
+    crate::atomic_file::write(&slice_path(app_data_dir, &record.id), &compressed).map_err(|e| e.to_string())?;
+    let uploader = uploader_in(record, names.local_id, names.local_name.clone());
+    update_meta(app_data_dir, &record.id, |meta| meta.uploader_actor_id = uploader);
     Ok(compressed.len())
 }
 
@@ -643,22 +752,37 @@ pub fn forget_slice(app_data_dir: &Path, id: &str) {
 pub fn prune_slices(app_data_dir: &Path) {
     let Ok(rd) = std::fs::read_dir(slices_dir(app_data_dir)) else { return };
     for entry in rd.filter_map(|e| e.ok()) {
+        if !entry.file_type().is_ok_and(|kind| kind.is_file()) { continue; }
         let name = entry.file_name().to_string_lossy().to_string();
-        let id = name.trim_end_matches(".a2es.gz").trim_end_matches(".json");
+        // Only completed files belong to pruning. A legacy or pid/counter
+        // temporary may still be in use, including by another meter process.
+        let Some(id) = name.strip_suffix(".a2es.gz").or_else(|| name.strip_suffix(".json")) else { continue };
         if !app_data_dir.join("history").join(format!("{id}.json")).exists() {
             let _ = std::fs::remove_file(entry.path());
         }
     }
 }
 
+#[cfg(feature = "online")]
 /// The setting that turns automatic uploads on. Off unless the player turns
 /// it on: an upload publishes a fight, and that is theirs to decide.
 pub const AUTO_UPLOAD_KEY: &str = "dpsMeter.autoUpload";
 
+#[cfg(feature = "online")]
+/// Whether finished fights upload by themselves: the account's switch, or
+/// uploading without an account (`account::guest`); `upload_detailed` picks
+/// the key.
+pub fn auto_uploads(settings: &crate::config::settings::Settings) -> bool {
+    settings.get(AUTO_UPLOAD_KEY).as_deref() == Some("true")
+        || crate::account::guest::uploads(settings)
+}
+
+#[cfg(feature = "online")]
 /// How long after the last hit a fight counts as over. The same rule the
 /// snapshot uses to stop re-saving a boss.
 const ENDED_AFTER_MS: i64 = 10_000;
 
+#[cfg(feature = "online")]
 /// Should the auto-save upload this fight now?
 ///
 /// Only a finished fight, once, with its packets behind it. A boss still being
@@ -667,6 +791,7 @@ const ENDED_AFTER_MS: i64 = 10_000;
 pub fn wants_auto_upload(app_data_dir: &Path, record: &FightRecord, now_ms: i64) -> bool {
     let meta = read_meta(app_data_dir, &record.id);
     !record.is_train
+        && is_instanced(record)
         && now_ms - (record.start_time_ms + record.duration_ms) >= ENDED_AFTER_MS
         && slice_path(app_data_dir, &record.id).exists()
         && meta.url.is_none()
@@ -674,32 +799,35 @@ pub fn wants_auto_upload(app_data_dir: &Path, record: &FightRecord, now_ms: i64)
         && meta.auto_attempts == 0
 }
 
+#[cfg(feature = "online")]
 /// How long to wait before each retry of a failed automatic upload, in
 /// minutes; one more failure after the last and it stops.
 const AUTO_RETRY_MINUTES: [i64; 6] = [1, 2, 5, 15, 30, 60];
 
+#[cfg(feature = "online")]
 /// How long to wait between tries while the keyring is locked.
 const KEYRING_RETRY_MINUTES: i64 = 5;
 
+#[cfg(feature = "online")]
 /// An automatic upload of `id` failed. Schedule the next try, or stop: when
 /// the failure is one waiting cannot fix (not signed in, a refused fight),
 /// or the retries are used up. A locked keyring uses up no retries.
 pub fn note_auto_upload_failure(app_data_dir: &Path, id: &str, failure: &UploadFailure, now_ms: i64) {
-    let mut meta = read_meta(app_data_dir, id);
-    if failure.keyring_locked {
-        meta.auto_attempts = meta.auto_attempts.max(1);
-        meta.retry_at_ms = now_ms + KEYRING_RETRY_MINUTES * 60_000;
-        write_meta(app_data_dir, id, &meta);
-        return;
-    }
-    meta.auto_attempts += 1;
-    match AUTO_RETRY_MINUTES.get(meta.auto_attempts as usize - 1) {
-        Some(minutes) if failure.retryable => meta.retry_at_ms = now_ms + minutes * 60_000,
-        _ => meta.gave_up = true,
-    }
-    write_meta(app_data_dir, id, &meta);
+    update_meta(app_data_dir, id, |meta| {
+        if failure.keyring_locked {
+            meta.auto_attempts = meta.auto_attempts.max(1);
+            meta.retry_at_ms = now_ms + KEYRING_RETRY_MINUTES * 60_000;
+            return;
+        }
+        meta.auto_attempts += 1;
+        match AUTO_RETRY_MINUTES.get(meta.auto_attempts as usize - 1) {
+            Some(minutes) if failure.retryable => meta.retry_at_ms = now_ms + minutes * 60_000,
+            _ => meta.gave_up = true,
+        }
+    });
 }
 
+#[cfg(feature = "online")]
 /// Fights whose automatic upload failed and is due to be tried again.
 pub fn auto_upload_retries_due(app_data_dir: &Path, now_ms: i64) -> Vec<String> {
     let Ok(rd) = std::fs::read_dir(slices_dir(app_data_dir)) else { return Vec::new() };
@@ -743,6 +871,7 @@ pub fn share_status(app_data_dir: &Path) -> HashMap<String, ShareStatus> {
     out
 }
 
+#[cfg(feature = "online")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadResult {
@@ -753,20 +882,20 @@ pub struct UploadResult {
     pub duplicate: bool,
 }
 
-/// The meter's display language, as the settings file holds it (`ko`, `en`, …).
+/// The meter's current display language (`ko`, `en`, …).
 ///
 /// Sent with an upload because a server id cannot tell Korea from Taiwan:
 /// both number their servers 1001–1058 and 2001–2058. The language and the
 /// computer's time zone are what the site has to go on; a player on Korean
 /// servers almost always has one or the other Korean.
-fn ui_language(app_data_dir: &Path) -> String {
-    std::fs::read_to_string(app_data_dir.join("settings.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str::<HashMap<String, String>>(&text).ok())
-        .and_then(|values| values.get("dpsMeter.language").cloned())
-        .unwrap_or_default()
+#[cfg_attr(not(feature = "online"), allow(dead_code))]
+pub(crate) fn ui_language(settings: &crate::config::settings::Settings) -> String {
+    // Settings writes are queued. Uploads must observe an accepted change even
+    // when its disk write is still pending or failed.
+    settings.get("dpsMeter.language").unwrap_or_default()
 }
 
+#[cfg(feature = "online")]
 /// Upload a saved fight as a log.
 ///
 /// Sends the slice and the names to show, never a number: the service derives
@@ -777,10 +906,12 @@ pub async fn upload(
     client: &reqwest::Client,
     app_data_dir: &Path,
     record: &FightRecord,
+    settings: &crate::config::settings::Settings,
 ) -> Result<UploadResult, String> {
-    upload_detailed(client, app_data_dir, record).await.map_err(|f| f.message)
+    upload_detailed(client, app_data_dir, record, settings).await.map_err(|f| f.message)
 }
 
+#[cfg(feature = "online")]
 /// Why an upload failed, and whether trying the same upload later could work.
 #[derive(Debug, Clone)]
 pub struct UploadFailure {
@@ -792,6 +923,7 @@ pub struct UploadFailure {
     pub keyring_locked: bool,
 }
 
+#[cfg(feature = "online")]
 impl UploadFailure {
     fn retry(message: impl Into<String>) -> Self {
         Self { message: message.into(), retryable: true, keyring_locked: false }
@@ -804,18 +936,44 @@ impl UploadFailure {
     }
 }
 
+/// Whether a fight is shared as a log: one in a dungeon or other instance
+/// (the meter saw its dungeon id). Open-world fights, field and world bosses,
+/// stay in the player's own history: they were 3% of logs and players come
+/// for dungeon bosses (2026-10-29).
+pub fn is_instanced(record: &FightRecord) -> bool {
+    record.dungeon_id != 0
+}
+
+#[cfg(feature = "online")]
 /// `upload`, saying whether a failure is worth retrying.
 pub async fn upload_detailed(
     client: &reqwest::Client,
     app_data_dir: &Path,
     record: &FightRecord,
+    settings: &crate::config::settings::Settings,
 ) -> Result<UploadResult, UploadFailure> {
+    if !is_instanced(record) {
+        return Err(UploadFailure::fatal("Only dungeon fights are shared as logs."));
+    }
+    let mut as_guest = false;
     let token = match crate::account::secret::load_stored(app_data_dir) {
         crate::account::secret::Stored::Token(token) => token,
         crate::account::secret::Stored::Locked => {
             return Err(UploadFailure::locked(
                 "The desktop keyring is locked. Unlock the keyring to upload fights.",
             ))
+        }
+        // Not signed in: as a guest, when the player chose to upload without
+        // an account (account::guest), claimable once they sign in.
+        crate::account::secret::Stored::Missing
+            if crate::account::guest::uploads(settings) =>
+        {
+            as_guest = true;
+            crate::account::guest::token(client, app_data_dir).await.map_err(|e| UploadFailure {
+                message: e.message,
+                retryable: e.retryable,
+                keyring_locked: false,
+            })?
         }
         crate::account::secret::Stored::Missing => {
             return Err(UploadFailure::fatal("Sign in under Settings → A2 Tools Account to upload fights."))
@@ -834,15 +992,22 @@ pub async fn upload_detailed(
                      Fights recorded from this version on can be.",
                 )
             })?;
-            gzip(&encoded).map_err(UploadFailure::fatal)?
+            compress_slice(&encoded).map_err(UploadFailure::fatal)?
         }
     };
 
     let meta = read_meta(app_data_dir, &record.id);
+    // A guest's upload names nobody, its uploader included: every name goes
+    // masked as the site shows them (Na***a), so a full name never leaves
+    // this PC without an account. Signed in, the account's fights carry the
+    // names (the site masks the party's).
     let names: HashMap<String, String> = record
         .actors
         .iter()
-        .map(|a| (a.actor_id.to_string(), a.nickname.clone()))
+        .map(|a| {
+            let name = if as_guest { crate::entity::fight_record::obscure_nickname(&a.nickname) } else { a.nickname.clone() };
+            (a.actor_id.to_string(), name)
+        })
         .collect();
     let body = serde_json::json!({
         "slice": base64(&compressed),
@@ -853,7 +1018,7 @@ pub async fn upload_detailed(
         // Korea and Taiwan number their servers alike (10xx/20xx), so the
         // slice cannot say which a fight was on; these two settle it. See
         // `region_hints`.
-        "uiLanguage": ui_language(app_data_dir),
+        "uiLanguage": ui_language(settings),
         "utcOffsetMinutes": chrono::Local::now().offset().local_minus_utc() / 60,
     });
 
@@ -873,14 +1038,23 @@ pub async fn upload_detailed(
     if status.is_success() {
         let result: UploadResult = serde_json::from_value(reply)
             .map_err(|_| UploadFailure::retry("Unexpected reply from a2tools.app."))?;
-        let mut meta = meta;
-        meta.url = Some(result.url.clone());
-        meta.visibility = Some(result.visibility.clone());
         let _ = std::fs::create_dir_all(slices_dir(app_data_dir));
-        write_meta(app_data_dir, &record.id, &meta);
+        update_meta(app_data_dir, &record.id, |meta| {
+            meta.url = Some(result.url.clone());
+            meta.visibility = Some(result.visibility.clone());
+        });
         return Ok(result);
     }
     let code = status.as_u16();
+    // The guest key no longer works: its fights were claimed by an account
+    // (from another device, with a claim code). Forgotten; the next upload
+    // goes as a new guest.
+    if code == 401 && as_guest {
+        crate::account::secret::clear_guest(app_data_dir);
+        return Err(UploadFailure::retry(
+            "This PC's earlier fights were claimed by an account. The next upload starts afresh without an account.",
+        ));
+    }
     let message = match (code, reply.get("error").and_then(|e| e.as_str())) {
         (401, _) => "Your sign-in has expired. Connect your account again in Settings.".into(),
         (403, Some("insufficient_scope")) => {
@@ -889,6 +1063,12 @@ pub async fn upload_detailed(
                 .into()
         }
         (429, _) => "Too many uploads in the last hour. Try again later.".into(),
+        // The recording carries 30 minutes of the zone before the pull, which
+        // in a crowded place can outgrow the site's limit.
+        (413, _) => format!(
+            "This fight's recording is too large to upload ({:.1} MB). Please send it to us              with Send logs to dev so we can look at it.",
+            compressed.len() as f64 / (1024.0 * 1024.0)
+        ),
         (_, _) => reply
             .get("message")
             .and_then(|m| m.as_str())
@@ -902,6 +1082,7 @@ pub async fn upload_detailed(
 }
 
 /// Standard base64. Small enough that a dependency is not worth having.
+#[cfg_attr(not(feature = "online"), allow(dead_code))]
 pub(crate) fn base64(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
@@ -917,6 +1098,7 @@ pub(crate) fn base64(data: &[u8]) -> String {
     out
 }
 
+#[cfg(feature = "online")]
 #[cfg(test)]
 mod upload_tests {
     use super::*;
@@ -931,6 +1113,8 @@ mod upload_tests {
         }))
         .unwrap();
         r.is_train = is_train;
+        // A dungeon's: only those are logs (is_instanced).
+        r.dungeon_id = 600101;
         r
     }
 
@@ -996,6 +1180,70 @@ mod upload_tests {
     }
 
     #[test]
+    fn updating_an_uploader_and_a_retry_preserves_both_without_blocking_other_fights() {
+        let dir = std::env::temp_dir().join(format!("a2t-meta-order-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(slices_dir(&dir)).unwrap();
+        write_meta(&dir, "f1", &SliceMeta {
+            visibility: Some("unlisted".into()), ..Default::default()
+        });
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let first_dir = dir.clone();
+        let first = std::thread::spawn(move || update_meta(&first_dir, "f1", |meta| {
+            meta.uploader_actor_id = Some(9);
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        }));
+        started_rx.recv().unwrap();
+        let retry_dir = dir.clone();
+        let retry = std::thread::spawn(move || {
+            note_auto_upload_failure(&retry_dir, "f1", &UploadFailure::retry("offline"), 1_000);
+        });
+        let other_dir = dir.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let other = std::thread::spawn(move || {
+            update_meta(&other_dir, "f2", |meta| meta.uploader_actor_id = Some(10));
+            done_tx.send(()).unwrap();
+        });
+        let independent = done_rx.recv_timeout(std::time::Duration::from_secs(2));
+        release_tx.send(()).unwrap();
+        first.join().unwrap();
+        retry.join().unwrap();
+        other.join().unwrap();
+        independent.expect("metadata for another fight waited");
+        let meta = read_meta(&dir, "f1");
+        assert_eq!(meta.uploader_actor_id, Some(9));
+        assert_eq!(meta.visibility.as_deref(), Some("unlisted"));
+        assert_eq!(meta.auto_attempts, 1);
+        assert_eq!(meta.retry_at_ms, 61_000);
+        assert_eq!(read_meta(&dir, "f2").uploader_actor_id, Some(10));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn concurrent_upload_failures_do_not_lose_retry_attempts() {
+        let dir = std::env::temp_dir().join(format!("a2t-meta-retries-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(slices_dir(&dir)).unwrap();
+        write_meta(&dir, "f1", &SliceMeta { uploader_actor_id: Some(5), ..Default::default() });
+        let start = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    start.wait();
+                    note_auto_upload_failure(&dir, "f1", &UploadFailure::retry("offline"), 1_000);
+                });
+            }
+        });
+        let meta = read_meta(&dir, "f1");
+        assert_eq!(meta.auto_attempts, 8);
+        assert!(meta.gave_up);
+        assert_eq!(meta.uploader_actor_id, Some(5));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn auto_upload_waits_for_the_end_and_fires_once() {
         let dir = std::env::temp_dir().join(format!("a2t-auto-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1009,6 +1257,8 @@ mod upload_tests {
         assert!(wants_auto_upload(&dir, &boss, ended));
         assert!(!wants_auto_upload(&dir, &fight("auto_9_1000", 1_000, 60_000, true), ended),
                 "a training dummy is never a log");
+        let open_world = FightRecord { dungeon_id: 0, ..boss.clone() };
+        assert!(!wants_auto_upload(&dir, &open_world, ended), "an open-world boss is never a log");
         write_meta(&dir, &boss.id, &SliceMeta { uploader_actor_id: None,
                    url: Some("https://a2tools.app/logs/x".into()), visibility: None, ..Default::default() });
         assert!(!wants_auto_upload(&dir, &boss, ended), "already uploaded");
@@ -1040,12 +1290,31 @@ mod upload_tests {
         assert_eq!(status["auto_1_2"].url.as_deref(), Some("https://a2tools.app/logs/abc"));
         assert!(status["auto_3_4"].has_slice && status["auto_3_4"].url.is_none());
 
-        // A slice whose fight is gone is removed; one whose fight exists stays.
+        // An orphaned completed slice is removed; temporary files are left
+        // alone because pruning cannot prove that their writer has stopped.
+        let leftover = slices_dir(&dir).join("auto_1_2.a2es.gz.7.0.tmp");
+        std::fs::write(&leftover, b"x").unwrap();
+        let legacy = slices_dir(&dir).join("auto_1_2.json.tmp");
+        std::fs::write(&legacy, b"x").unwrap();
+        let unknown = slices_dir(&dir).join("unrelated.txt");
+        std::fs::write(&unknown, b"x").unwrap();
+        let directory = slices_dir(&dir).join("unrelated.json");
+        std::fs::create_dir(&directory).unwrap();
         std::fs::create_dir_all(dir.join("history")).unwrap();
         std::fs::write(dir.join("history").join("auto_3_4.json"), b"{}").unwrap();
+        let dotted = "fight.json.extra";
+        std::fs::write(slice_path(&dir, dotted), b"x").unwrap();
+        write_meta(&dir, dotted, &SliceMeta::default());
+        std::fs::write(dir.join("history").join(format!("{dotted}.json")), b"{}").unwrap();
         prune_slices(&dir);
         let status = share_status(&dir);
         assert!(!status.contains_key("auto_1_2"));
+        assert!(leftover.exists());
+        assert!(legacy.exists());
+        assert!(unknown.exists());
+        assert!(directory.is_dir());
+        assert!(slice_path(&dir, dotted).exists());
+        assert!(meta_path(&dir, dotted).exists());
         assert!(status.contains_key("auto_3_4"));
         let _ = std::fs::remove_dir_all(&dir);
     }

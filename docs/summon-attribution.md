@@ -72,6 +72,17 @@ name resolves to a known entity, that is the owner. Cheap, and it covers
 
 **Code:** `parse_summon_spawn_at`, the `spawn_name` fallback.
 
+A monster's summon carries a name too: the player it targets. A Blazing Totem
+(NPC 2920063) named the player it burned, and its Burn ticks on that player
+counted as the player's healing. So no spawn path links a spawn whose own NPC
+code the NPC table names but not as a player's summon (NpcData
+`RelationshipEntity` other than `PC_Summon`; the player summons are listed in
+`src/data/player_summon_npcs.json`). Only the code in that spawn record counts:
+an entity id keeps the code of the last entity under it, and other players'
+spirits spawn with no code at all. In the check kit's captures this dropped 63
+links (Blazing Totems, Kromede's Desire, Gas Rocks, Zumion's Energy and three
+more) and kept every other one (2026-10-06).
+
 ---
 
 ## 3. Friendly-effect target

@@ -107,6 +107,13 @@ impl NpcLookup {
         self.npcs.read().get(&code).is_some_and(|n| n.is_boss)
     }
 
+    /// Whether `code` is an NPC the table names that no player's skill
+    /// spawns: a monster, a monster's summon, a townsperson. A spawn of one
+    /// is no player's summon, whatever player its record names.
+    pub fn is_no_players_summon(&self, code: i32) -> bool {
+        !PLAYER_SUMMON_NPCS.is_empty() && self.npcs.read().contains_key(&code) && !PLAYER_SUMMON_NPCS.contains(&code)
+    }
+
     /// The instance the table says boss `code` is fought in, if it says.
     pub fn dungeon_of(&self, code: i32) -> Option<i32> {
         self.npcs.read().get(&code).map(|n| n.dungeon_id).filter(|&d| d > 0)
@@ -125,6 +132,18 @@ impl NpcLookup {
             || self.npcs.read().get(&code).is_some_and(|n| n.is_dummy)
     }
 }
+
+/// The NPCs a player's skill spawns (NpcData `RelationshipEntity` PC_Summon):
+/// spirits, a Sorcerer's ground spells and the like.
+static PLAYER_SUMMON_NPCS: std::sync::LazyLock<std::collections::HashSet<i32>> = std::sync::LazyLock::new(|| {
+    #[derive(serde::Deserialize)]
+    struct Table {
+        npcs: Vec<i32>,
+    }
+    serde_json::from_str::<Table>(include_str!("../../../src/data/player_summon_npcs.json"))
+        .map(|t| t.npcs.into_iter().collect())
+        .unwrap_or_default()
+});
 
 /// Training scarecrows known before the NPC table flagged dummies, kept so a
 /// lookup with no table loaded still recognises them.
@@ -190,6 +209,22 @@ mod tests {
             }
             // A real boss (Terminator Bargott) is not one.
             assert!(lookup.is_boss(2301208) && !lookup.is_training_dummy(2301208), "{lang}");
+        }
+    }
+
+    #[test]
+    fn monsters_summons_are_no_players_and_spirits_are() {
+        let lookup = NpcLookup::new();
+        assert!(!lookup.is_no_players_summon(2920063), "nothing known before a table loads");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/data/i18n/npcs");
+        lookup.load_from_json(&std::fs::read_to_string(dir.join("zh-Hant.json")).unwrap());
+        // Blazing Totem, Kromede's Desire, Gas Rock.
+        for code in [2920063, 2920342, 2920091] {
+            assert!(lookup.is_no_players_summon(code), "{code}");
+        }
+        // Wind and Fire Spirit, a Sorcerer's ground spell, and a code no table names.
+        for code in [2920149, 2920112, 2920011, 1] {
+            assert!(!lookup.is_no_players_summon(code), "{code}");
         }
     }
 

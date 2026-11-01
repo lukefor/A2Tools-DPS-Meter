@@ -186,7 +186,36 @@
   // are not fetched again on every redraw.
   const fetchFailed = new Set();
   const unavailable = new Set();
-  const getIconCandidates = (skill = {}) => resolveIconCandidates(skill).filter((url) => !unavailable.has(url));
+  // A caller may give its own list (`skill.candidates`), as buff icons do.
+  const getIconCandidates = (skill = {}) =>
+    (Array.isArray(skill.candidates) ? skill.candidates : resolveIconCandidates(skill))
+      .filter((url) => !unavailable.has(url));
+
+  // A neutral dot, for a buff with no icon of its own and no skill's.
+  const DOT_ICON = "data:image/svg+xml," + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5" fill="#8890a4"/></svg>`
+  );
+
+  // A buff's icon: its own (abnormals.json names the file), else the icon of
+  // the skill that applied it, else a dot.
+  const getAbnormalIconCandidates = (iconName, skillCode) => {
+    const out = [];
+    if (typeof iconName === "string" && /^[A-Za-z0-9_]+$/.test(iconName)) {
+      out.push(`${BASE_URL}/${iconName}.png`);
+      // Some buff icons are named after the skill's with "_Buff" added and
+      // are not on the CDN (ICON_CL_SKILL_040_Buff, Earth's Blessing): the
+      // skill's own icon is the next best.
+      const plain = iconName.replace(/_(Buff|Debuff)$/i, "");
+      if (plain !== iconName) out.push(`${BASE_URL}/${plain}.png`);
+    }
+    if (Number(skillCode) > 0) {
+      for (const url of resolveIconCandidates({ code: skillCode })) {
+        if (url !== WAND_ICON && url !== SWORDS_ICON && !out.includes(url)) out.push(url);
+      }
+    }
+    out.push(DOT_ICON);
+    return out.filter((url) => !unavailable.has(url));
+  };
 
   // Warn only when an icon is missing or its direct image load also fails.
   let failuresLogged = 0;
@@ -214,10 +243,14 @@
     const bridge = window.javaBridge;
 
     const p = Promise.resolve()
-      .then(() => {
-        // Try disk cache first
-        if (cacheKey && bridge?.readCachedIcon) {
-          const b64 = bridge.readCachedIcon(cacheKey);
+      .then(async () => {
+        // Try disk cache first. Waited for: the synchronous read answered
+        // null on a window's first ask, so every icon was downloaded again
+        // in every window.
+        if (cacheKey && (bridge?.readCachedIconAsync || bridge?.readCachedIcon)) {
+          const b64 = bridge.readCachedIconAsync
+            ? await bridge.readCachedIconAsync(cacheKey)
+            : bridge.readCachedIcon(cacheKey);
           if (b64) {
             const binary = atob(b64);
             const bytes = new Uint8Array(binary.length);
@@ -342,9 +375,16 @@
     }
     let candidates = [];
     try {
+      // The list is plain JSON. It holds data: URIs full of %-escapes, so
+      // decoding it before parsing broke it, and every icon whose first
+      // file failed fell straight to the wand (buffs' "_Buff" icons). An
+      // older encoded list is still read.
       const raw = imgEl.dataset.iconCandidates || "[]";
-      const decoded = raw.includes("%") ? decodeURIComponent(raw) : raw;
-      candidates = JSON.parse(decoded);
+      try {
+        candidates = JSON.parse(raw);
+      } catch (_) {
+        candidates = JSON.parse(decodeURIComponent(raw));
+      }
     } catch (_) {
       candidates = [];
     }
@@ -373,6 +413,7 @@
 
   global.skillIcons = {
     getIconCandidates,
+    getAbnormalIconCandidates,
     getTheostoneNameColor,
     applyIconToImage,
     handleImgError,

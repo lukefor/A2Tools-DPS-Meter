@@ -1,23 +1,26 @@
 {
   "name": "a2tools-dps-meter",
   "private": true,
-  "version": "2.0.50",
+  "version": "2.0.87",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "build:offline": "tauri build -- --no-default-features --features desktop",
+    "dev:offline": "tauri dev -- --no-default-features --features desktop",
+    "dev:stop": "node -e \"const p=require('path'),os=require('os'),fs=require('fs');const d=p.join(process.env.APPDATA||p.join(os.homedir(),'.local','share'),'com.a2tools.dps-meter');fs.mkdirSync(d,{recursive:true});fs.writeFileSync(p.join(d,'dev-quit'),'');console.log('asked the dev meter to quit')\"",
     "rename-msi": "node -e \"const fs=require('fs'),p=require('path'),d='src-tauri/target/release/bundle/msi';fs.readdirSync(d).filter(f=>f.endsWith('.msi')).forEach(f=>{const n=f.replace(/ /g,'-');if(n!==f){fs.renameSync(p.join(d,f),p.join(d,n));console.log(f+' -> '+n)}})\""
   },
   "dependencies": {
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2",
-    "@tauri-apps/plugin-process": "^2"
+    "@tauri-apps/api": "^2.12.3",
+    "@tauri-apps/plugin-opener": "^2.7.1",
+    "@tauri-apps/plugin-process": "^2.4.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
-    "vite": "^6.0.3",
-    "typescript": "~5.6.2"
+    "@tauri-apps/cli": "^2.12.2",
+    "typescript": "~5.6.2",
+    "vite": "^6.4.5"
   }
 }

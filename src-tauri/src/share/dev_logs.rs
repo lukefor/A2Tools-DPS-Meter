@@ -1,4 +1,5 @@
-//! "Send logs to dev": the newest packet captures, to a2tools.app, for debugging.
+//! "Send logs to dev": the meter's debug log and the newest packet captures,
+//! to a2tools.app, for debugging.
 //!
 //! Unlike a fight upload this sends raw packet logs: everything the game sent
 //! while packet logging was on, names included. The UI asks first, and the
@@ -28,6 +29,23 @@ pub struct SendResult {
 ///
 /// Capture names are timestamped (`packets_YYYYMMDD_HHMMSS[_N].txt`), so name
 /// order is time order, which is also how the logger prunes them.
+/// What a report sends: the debug log, when there is one (what the meter did:
+/// windows shown and hidden, widgets opened and closed, which captures alone
+/// don't say), then the newest captures, `SEND_FILES` in all (the site takes
+/// three, and `debug.log` by that name).
+pub fn files_to_send(app_data_dir: &Path) -> Vec<PathBuf> {
+    let debug = app_data_dir.join("debug.log");
+    let mut files: Vec<PathBuf> =
+        std::fs::metadata(&debug).is_ok_and(|m| m.is_file() && m.len() > 0).then_some(debug).into_iter().collect();
+    let room = SEND_FILES - files.len();
+    files.extend(newest_captures(app_data_dir).into_iter().take(room));
+    files
+}
+
+/// The most of the debug log a report sends: its newest part, under the
+/// site's 40 MB a file.
+const DEBUG_LOG_MAX_BYTES: usize = 32 * 1024 * 1024;
+
 pub fn newest_captures(app_data_dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(app_data_dir) else { return Vec::new() };
     let mut files: Vec<PathBuf> = entries
@@ -48,9 +66,9 @@ pub fn newest_captures(app_data_dir: &Path) -> Vec<PathBuf> {
 }
 
 pub async fn send(client: &reqwest::Client, app_data_dir: &Path) -> Result<SendResult, String> {
-    let paths = newest_captures(app_data_dir);
+    let paths = files_to_send(app_data_dir);
     if paths.is_empty() {
-        return Err("There are no packet logs to send. Turn on packet logging, play until \
+        return Err("There are no logs to send. Turn on debug logging or packet logging, play until \
                     the problem happens, then send."
             .to_string());
     }
@@ -61,7 +79,10 @@ pub async fn send(client: &reqwest::Client, app_data_dir: &Path) -> Result<SendR
             .iter()
             .map(|p| {
                 let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
-                let raw = std::fs::read(p).map_err(|e| format!("Could not read {name}: {e}"))?;
+                let mut raw = std::fs::read(p).map_err(|e| format!("Could not read {name}: {e}"))?;
+                if name == "debug.log" && raw.len() > DEBUG_LOG_MAX_BYTES {
+                    raw.drain(..raw.len() - DEBUG_LOG_MAX_BYTES);
+                }
                 let size = raw.len();
                 Ok((name, size, super::gzip(&raw)?))
             })
@@ -178,6 +199,27 @@ mod tests {
                 "packets_20261002_000000.txt",
             ]
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_debug_log_goes_first_then_the_newest_captures() {
+        let dir = std::env::temp_dir().join(format!("a2t-devlogs-dbg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        touch(&dir, "packets_20261001_000000.txt", "a");
+        touch(&dir, "packets_20261002_000000.txt", "b");
+        touch(&dir, "packets_20261003_000000.txt", "c");
+        let names = |dir: &Path| -> Vec<String> {
+            files_to_send(dir).iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect()
+        };
+        assert_eq!(names(&dir), vec!["packets_20261003_000000.txt", "packets_20261002_000000.txt", "packets_20261001_000000.txt"], "no debug log: captures only");
+        touch(&dir, "debug.log", "what the meter did");
+        assert_eq!(names(&dir), vec!["debug.log", "packets_20261003_000000.txt", "packets_20261002_000000.txt"]);
+        for f in ["packets_20261001_000000.txt", "packets_20261002_000000.txt", "packets_20261003_000000.txt"] {
+            std::fs::remove_file(dir.join(f)).unwrap();
+        }
+        assert_eq!(names(&dir), vec!["debug.log"], "debug logging alone is enough");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

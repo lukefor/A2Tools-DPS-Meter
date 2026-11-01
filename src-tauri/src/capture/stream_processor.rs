@@ -2,9 +2,11 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 
-use crate::combat::data_storage::DataStorage;
+use crate::combat::data_storage::{DataStorage, DutyOffer, NoDamageHit};
+use crate::combat::death_recap::{self, Killer};
 use crate::entity::damage_packet::ParsedDamagePacket;
-use crate::entity::special_damage::SpecialDamage;
+use crate::entity::job_class::JobClass;
+use crate::entity::special_damage::{self, SpecialDamage};
 use crate::i18n::lookup::{NpcLookup, SkillLookup};
 
 /// VarInt decode result.
@@ -27,32 +29,39 @@ struct PendingCompactSkillContext {
     skill_raw: i32,
 }
 
-/// Bounded LRU set for deduplication.
+/// Bounded set for deduplication: the oldest key goes when it is full. A
+/// hash set, with the order kept beside it: a list scanned up to 16 384
+/// times per lookup cost a crafted packet a lot (audit L8).
 struct BoundedHashSet {
-    set: Vec<String>,
+    set: HashSet<String>,
+    order: std::collections::VecDeque<String>,
     max_size: usize,
 }
 
 impl BoundedHashSet {
     fn new(max_size: usize) -> Self {
         Self {
-            set: Vec::new(),
+            set: HashSet::new(),
+            order: std::collections::VecDeque::new(),
             max_size,
         }
     }
 
     fn contains(&self, key: &str) -> bool {
-        self.set.iter().any(|s| s == key)
+        self.set.contains(key)
     }
 
     fn insert(&mut self, key: String) -> bool {
         if self.contains(&key) {
             return false;
         }
-        if self.set.len() >= self.max_size {
-            self.set.remove(0);
+        if self.order.len() >= self.max_size {
+            if let Some(oldest) = self.order.pop_front() {
+                self.set.remove(&oldest);
+            }
         }
-        self.set.push(key);
+        self.set.insert(key.clone());
+        self.order.push_back(key);
         true
     }
 }
@@ -69,6 +78,10 @@ pub struct StreamProcessor {
     /// When set, override the timestamp on all created packets (for replay mode).
     override_timestamp: Option<i64>,
 }
+
+/// The `42 36` flag of an entity leaving the world, a spirit unsummoned among
+/// others (197 of the 370 in a 2026-10-06 capture were linked spirits).
+const DESPAWN_FLAG: i32 = 7;
 
 impl StreamProcessor {
     pub fn new(data_storage: Arc<DataStorage>, skill_lookup: Arc<SkillLookup>, npc_lookup: Arc<NpcLookup>) -> Self {
@@ -113,43 +126,59 @@ impl StreamProcessor {
         for frame in &framing.frames {
             match frame.kind {
                 super::framing::FrameKind::Bundle => {
-                    self.unwrap_bundle(frame.payload(buffer));
+                    super::framing::new_read();
+                    self.unwrap_bundle(frame.payload(buffer), 1);
                 }
                 super::framing::FrameKind::Packet => {
+                    // Bundles carried inside it are opened (identity).
+                    super::framing::new_read();
                     self.parse_perfect_packet(frame.bytes(buffer));
                     self.scan_embedded_bundles_for_identity(frame.bytes(buffer));
                 }
             }
         }
 
-        // Scan for embedded 04 8D ownership sub-packets
-        if buffer.len() >= 4 {
-            self.scan_for_embedded_04_8d(buffer);
-            self.scan_for_entity_hp(buffer);
-        }
-
-        // Scan for embedded spawn opcodes (40/41/44/45 36) in the raw buffer.
-        // The bundle path does this on the decompressed stream (see unwrap_bundle),
-        // but standalone (non-bundle) packets never got this scan — so player-spawn
-        // names (45 36) that sit mid-packet, rather than at the packet front where
-        // parse_summon_packet looks, were never extracted. This is why party members
-        // announced only via a mid-packet 45 36 stayed unnamed (#id) while the local
-        // player resolved through other anchors.
-        if buffer.len() >= 6 {
-            self.scan_for_embedded_40_36(buffer);
-        }
-
-        // Bind the local player from the account character-select list, which
-        // arrives as plaintext (uncompressed) and can land in a standalone packet.
-        self.scan_char_list_self(buffer);
-        // Mask-driven id↔name records: the self record (33 36) and every other
-        // player's record (45 36). This is the primary naming source — it covers
-        // the already-loaded case where no login char-list is in the capture.
-        self.scan_masked_identity(buffer);
-        // Party roster (names, levels, gear score, combat power).
-        self.scan_party_roster(buffer);
+        // The unconsumed tail (a frame still arriving) is its own region.
+        let regions = super::framing::regions(&framing.frames, buffer.len());
+        self.scan_records(buffer, &regions);
 
         offset
+    }
+
+    /// The scans for records that sit anywhere in a packet, each run over one
+    /// frame (or stretch between frames) at a time, so no record borrows the
+    /// next frame's bytes: a `2a 37` record ending `44 36 33 ..`, read on into
+    /// the next frame's length `8f 01` and spawn `41 36`, named entity 51 "A"
+    /// (2026-10-06). Each scan still runs over all of `data` before the next.
+    fn scan_records(&mut self, data: &[u8], regions: &[std::ops::Range<usize>]) {
+        // Embedded 04 8D ownership and loot records.
+        for r in regions {
+            self.scan_for_embedded_04_8d(&data[r.clone()]);
+        }
+        if data.len() >= 4 {
+            self.scan_for_entity_hp(data);
+        }
+        // Embedded spawn opcodes (40/41/44/45 36). Player spawns (45 36) also
+        // sit mid-packet, where parse_summon_packet at the packet front never
+        // looks: party members announced only that way stayed unnamed (#id).
+        for r in regions {
+            self.scan_for_embedded_40_36(&data[r.clone()]);
+        }
+        // Bind the local player from the account character-select list, which
+        // arrives as plaintext (uncompressed) and can land in a standalone packet.
+        for r in regions {
+            self.scan_char_list_self(&data[r.clone()]);
+        }
+        // Mask-driven id<->name records: the self record (33 36) and every other
+        // player's record (45 36). This is the primary naming source: it covers
+        // the already-loaded case where no login char-list is in the capture.
+        for r in regions {
+            self.scan_masked_identity(&data[r.clone()]);
+        }
+        // Party roster (names, levels, gear score, combat power).
+        for r in regions {
+            self.scan_party_roster(&data[r.clone()]);
+        }
     }
 
     /// Who you are, from compressed bundles that sit inside another packet.
@@ -181,8 +210,14 @@ impl StreamProcessor {
             });
             match bundle {
                 Some((end, data)) => {
-                    self.scan_masked_identity(&data);
-                    self.scan_party_roster(&data);
+                    let walk = super::framing::walk_inner(&data);
+                    let regions = super::framing::regions(&walk.frames, data.len());
+                    for r in &regions {
+                        self.scan_masked_identity(&data[r.clone()]);
+                    }
+                    for r in &regions {
+                        self.scan_party_roster(&data[r.clone()]);
+                    }
                     i = end;
                 }
                 None => i += 1,
@@ -190,10 +225,12 @@ impl StreamProcessor {
         }
     }
 
-    fn unwrap_bundle(&mut self, payload: &[u8]) {
+    /// `depth` is 1 for a bundle in the stream, one more for each bundle it
+    /// sits in. Past `MAX_BUNDLE_DEPTH` it is skipped, as the slice builder does.
+    fn unwrap_bundle(&mut self, payload: &[u8], depth: usize) {
         // payload starts at FF FF
         // Format: FF FF (2) + decompressed_size (4 LE) + LZ4 compressed data
-        if payload.len() < 7 {
+        if payload.len() < 7 || depth > super::framing::MAX_BUNDLE_DEPTH {
             return;
         }
 
@@ -207,10 +244,11 @@ impl StreamProcessor {
         // exactly the way this does.
         self.pending_compact_skill_context = None;
 
-        for frame in &super::framing::walk_inner(&decompressed).frames {
+        let walk = super::framing::walk_inner(&decompressed);
+        for frame in &walk.frames {
             match frame.kind {
                 super::framing::FrameKind::Bundle => {
-                    self.unwrap_bundle(frame.payload(&decompressed));
+                    self.unwrap_bundle(frame.payload(&decompressed), depth + 1);
                 }
                 super::framing::FrameKind::Packet => {
                     let inner_packet = frame.bytes(&decompressed);
@@ -222,13 +260,9 @@ impl StreamProcessor {
             }
         }
 
-        // Scan for embedded 04 8D and 40 36 in decompressed data
-        self.scan_for_embedded_04_8d(&decompressed);
-        self.scan_for_entity_hp(&decompressed);
-        self.scan_for_embedded_40_36(&decompressed);
-        self.scan_char_list_self(&decompressed);
-        self.scan_masked_identity(&decompressed);
-        self.scan_party_roster(&decompressed);
+        // The same record scans as a stream gets, over the decompressed data.
+        let regions = super::framing::regions(&walk.frames, decompressed.len());
+        self.scan_records(&decompressed, &regions);
 
         self.pending_compact_skill_context = None;
     }
@@ -238,6 +272,12 @@ impl StreamProcessor {
             return false;
         }
 
+        // Plugin decoders (`crate::plugins`); nothing when none is loaded.
+        crate::capture::frame_tap::frame(packet);
+
+        // Buffs, debuffs and stats, recorded alongside (see `capture::abnormal`).
+        self.data_storage.note_abnormal_packet(packet);
+
         let parsed_damage = self.parsing_damage(packet, true, false);
         let parsed_ownership = self.parse_summon_ownership_packet(packet);
         let parsed_summon = self.parse_summon_packet(packet);
@@ -246,9 +286,28 @@ impl StreamProcessor {
             || self.parsing_nickname(packet);
         let parsed_hp = self.parse_hp_mp_update_packet(packet);
         self.parse_party_scope_packet(packet);
+        self.parse_party_left_packet(packet);
+        self.parse_odyle_energy_packet(packet);
+        self.parse_daily_duty_packet(packet);
+        self.parse_shop_and_craft_packet(packet);
+        self.parse_kinah_and_abyss_points_packet(packet);
+        self.parse_stagger_gauge_packet(packet);
+        self.parse_self_stats_packet(packet);
         self.parse_death_packet(packet);
         self.parse_zone_change_packet(packet);
         self.parse_map_load_packet(packet);
+        // The field bosses on a map the player opened (boss timers).
+        if let Some(map) = crate::capture::boss_map::parse(packet, crate::clock::now_ms()) {
+            self.data_storage.note_boss_map(map);
+        }
+        // Who holds the Abyss artifacts (with the Abyss map, and on entry).
+        if let Some(state) = crate::capture::abyss_artifacts::parse(packet) {
+            self.data_storage.note_abyss_artifacts(state);
+        }
+        // The Supply Requests boards (at login), for Profiteer.
+        if let Some(boards) = crate::capture::supply_requests::parse(packet) {
+            self.data_storage.note_supply_requests(boards);
+        }
 
         if !parsed_damage && !parsed_name && !parsed_summon && !parsed_ownership && !parsed_hp {
             self.parse_dot_packet(packet);
@@ -274,6 +333,274 @@ impl StreamProcessor {
         let id = read_varint(packet, offset + 2);
         if id.length > 0 {
             self.data_storage.note_party_scope(id.value);
+        }
+    }
+
+    // ===== PARTY LEFT (13 92, 1D 97) =====
+
+    /// `<len> 13 92 00 00` (an open-world party) or `<len> 1D 97 00 00` (a
+    /// dungeon or raid party): you are no longer in a party.
+    ///
+    /// `13 92` was on leaving an open-world party at 23:39:12 and 23:43:42 on
+    /// 2026-10-13 (the second after `1f 92 03`, the last member having gone
+    /// at 23:43:12). `1d 97` was on leaving a dungeon party at 00:34:56 and
+    /// 00:58:58 and a raid at 03:18:39 on 2026-10-14 (followed by `1b 97` and
+    /// the party's key). Neither was in any other capture.
+    fn parse_party_left_packet(&self, packet: &[u8]) {
+        let length_info = read_varint(packet, 0);
+        if length_info.length <= 0 {
+            return;
+        }
+        let offset = length_info.length as usize;
+        let record = packet.get(offset..);
+        if record == Some(&[0x13, 0x92, 0x00, 0x00][..]) || record == Some(&[0x1D, 0x97, 0x00, 0x00][..]) {
+            self.data_storage.note_party_left();
+        }
+    }
+
+    // ===== ODYLE ENERGY (0B 61, 0C 61) =====
+
+    /// The game's entry counts (see `content_entry_at`), Odyle energy among
+    /// them: entry id 60000001, `0c 01 87 93 03 <basic> <charged>`. `0b 61`
+    /// holds the whole list, at login and after a server transfer, among
+    /// other things before it; `0c 61 <count> <entries>` the entries that
+    /// changed.
+    ///
+    /// Seen on 2026-10-14: the list at 03:18:42 (15 basic, 605 charged, after
+    /// a raid) and at 21:16:50 (30, 840, at login; the game's tooltip said
+    /// 30/840 and 840/2000); a recharge item at 21:24:45 sent
+    /// `0c 61 01 0c 01 87 93 03 1e f0 06 01 28 00 00 00` (charged 880).
+    fn parse_odyle_energy_packet(&self, packet: &[u8]) {
+        let length_info = read_varint(packet, 0);
+        if length_info.length <= 0 {
+            return;
+        }
+        let offset = length_info.length as usize;
+        let whole_list = match packet.get(offset..offset + 2) {
+            Some([0x0B, 0x61]) => true,
+            Some([0x0C, 0x61]) => false,
+            _ => return,
+        };
+        let body = &packet[offset + 2..];
+        let entries = if whole_list { content_counts_in_list(body) } else { content_counts_in_update(body) };
+        let energy = entries
+            .as_ref()
+            .and_then(|e| odyle_energy_in(&e.counts))
+            .or_else(|| if whole_list { odyle_energy_in_list(body) } else { None });
+        // A whole list that doesn't read still says a character logged in:
+        // the last one's counts go, with nothing in their place.
+        if entries.is_some() || whole_list {
+            let now = self.override_timestamp.unwrap_or_else(crate::clock::now_ms);
+            self.data_storage.set_entry_list(entries.unwrap_or_default(), energy, whole_list, now);
+        }
+    }
+
+    // ===== DAILY DUTY BOARD (1C 8D, 20 8D, 0D 8D) =====
+
+    /// Daily Duty: the character's daily board of quest offers, and how many
+    /// of them were taken today (the game's "Per Server Daily Completion"
+    /// n/5: taken ones count, done or not, and giving one up frees it). Each
+    /// character has its own board, but the limit is the server's: the sum of
+    /// each character's today (5 taken on Nulli, none could be taken on
+    /// Nullception). A board not used since a reset still comes, with that
+    /// reset (Nullception's of yesterday, all completed): it counts 0. A
+    /// login's list drops the last board (`set_content_counts`).
+    ///
+    /// `1c 8d` is the board, at login and after a server transfer:
+    /// `<8 bytes> <count varint>`, then each offer `<offer u32> <quest u32>
+    /// <your quest number u32> <u32> <state u8> <rewards n u8>` and n rewards
+    /// `<item u32> <count varint> <u8> <u64>`, then the next reset (u64 ms),
+    /// a byte and the reset again. State 01 is open, 02 taken, 04
+    /// completed (handed in). The game sends the board again at a turn-in. `20 8d 01 00 00 <offer u32> <quest
+    /// u32> <your quest number u32>` is an offer taken; `0d 8d 00 00 <your
+    /// quest number u32>` a quest given up.
+    ///
+    /// Seen on 2026-10-24 (Nullception): the board at a transfer with three
+    /// taken (the game said 3/5); Defiance II taken as offer 37, quest
+    /// 2302143, number 263; Weaken Blades Defenses taken (offer 45, number
+    /// 266) and given up 3 s later. At 17:54:26 a turn-in (quest number
+    /// 268, after `0f 8d 00 00 0c 01 00 00 ...`) sent the board again at
+    /// once: 20 offers, five taken, that one at 04.
+    fn parse_daily_duty_packet(&self, packet: &[u8]) {
+        let length_info = read_varint(packet, 0);
+        if length_info.length <= 0 {
+            return;
+        }
+        let offset = length_info.length as usize;
+        let body = packet.get(offset + 2..).unwrap_or_default();
+        match packet.get(offset..offset + 2) {
+            Some([0x1C, 0x8D]) => {
+                if let Some((offers, reset_ms)) = daily_duty_board(body) {
+                    self.data_storage.set_daily_duty_board(offers, reset_ms);
+                } else {
+                    // Rare (login, transfer, turn-in): one that doesn't read
+                    // as a board is logged, to see how it differs.
+                    let hex: String = body.iter().take(64).map(|b| format!("{b:02x}")).collect();
+                    tracing::info!("Daily Duty: unreadable board ({} bytes): {hex}", body.len());
+                }
+            }
+            Some([0x20, 0x8D]) if body.len() >= 15 && body[..3] == [0x01, 0x00, 0x00] => {
+                let offer = u32::from_le_bytes(body[3..7].try_into().unwrap());
+                let quest = u32::from_le_bytes(body[7..11].try_into().unwrap());
+                let number = u32::from_le_bytes(body[11..15].try_into().unwrap());
+                let now = self.override_timestamp.unwrap_or_else(crate::clock::now_ms);
+                self.data_storage.daily_duty_taken(offer, quest, number, now);
+            }
+            Some([0x0D, 0x8D]) if body.len() >= 6 && body[..2] == [0x00, 0x00] => {
+                let number = u32::from_le_bytes(body[2..6].try_into().unwrap());
+                self.data_storage.daily_duty_given_up(number);
+            }
+            _ => {}
+        }
+    }
+
+    // ===== SHOP LIMITS AND CRAFTS (8E 56, 8F 56, 8F 8D, 8B 8D) =====
+
+    /// The shop's weekly purchase limits and the crafts made, for plugins.
+    ///
+    /// `8e 56 00 00 <count u8>` then each `<item id u32> <bought u32> <next
+    /// reset u64 ms>`: the whole list as the shop opens, or the one bought;
+    /// `8f 56` is one such entry alone. `8f 8d` is the crafting window's
+    /// recipes as it opens, `00 00 00 00` then sections `<count u8>` of
+    /// `<recipe u32> <crafted u32>`; `8b 8d` a craft done, `00 00 01
+    /// <recipe u32> 50 05 <recipe u32> ...` with the server's count at 33
+    /// and the character's at 37 (a recipe has one or the other).
+    ///
+    /// Seen on 2026-10-25 (Nulli, Nullception): Buy Odyle Energy (item
+    /// 100134) at 20 as the game said 20/20, Buy Rift Stones (100135) 0 then
+    /// 1 as one was bought (both weekly, reset Wednesday 07:00 UTC); Odyle
+    /// Energy crafts, recipe 32070001 (server-wide, the game's 3/16) going
+    /// 1, 2, 3 and 32070002 (each character's, 1/4) going 0 to 1.
+    fn parse_shop_and_craft_packet(&self, packet: &[u8]) {
+        let length_info = read_varint(packet, 0);
+        if length_info.length <= 0 {
+            return;
+        }
+        let offset = length_info.length as usize;
+        let body = packet.get(offset + 2..).unwrap_or_default();
+        match packet.get(offset..offset + 2) {
+            Some([0x8E, 0x56]) => {
+                // More than one is the shop's whole list (as it opens); one
+                // is what was just bought, or a shop with one limit.
+                if let Some(limits) = shop_limits(body) {
+                    self.data_storage.set_shop_limits(&limits, limits.len() > 1);
+                }
+            }
+            Some([0x8F, 0x56]) => {
+                if let Some(limit) = shop_limit_at(body, 0).filter(|_| body.len() == 16) {
+                    self.data_storage.set_shop_limits(&[limit], false);
+                }
+            }
+            Some([0x8F, 0x8D]) => {
+                if let Some(counts) = craft_list(body) {
+                    self.data_storage.set_craft_counts(&counts, true);
+                }
+            }
+            Some([0x8B, 0x8D]) => {
+                if let Some(count) = craft_done(body) {
+                    self.data_storage.set_craft_counts(&[count], false);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // ===== KINAH TODAY AND ABYSS POINTS (A5 FF, A6 FF, A9 FF) =====
+
+    /// The Kinah gained today and the week's Abyss Points, for plugins. At a
+    /// login or transfer the Abyss Points come just before the list and
+    /// again with the self record, the Kinah (`a5`) just after the list;
+    /// the Kinah comes again at each gain (`a6`).
+    ///
+    /// Seen on 2026-10-25 (Nullception): the Abyss Points 50659 of 2000000
+    /// as the game said, and Kinah 520, 1017, 1534 as it was picked up (the
+    /// game: 1534 of its daily 1000000).
+    fn parse_kinah_and_abyss_points_packet(&self, packet: &[u8]) {
+        let length_info = read_varint(packet, 0);
+        if length_info.length <= 0 {
+            return;
+        }
+        let offset = length_info.length as usize;
+        let body = packet.get(offset + 2..).unwrap_or_default();
+        match packet.get(offset..offset + 2) {
+            // Kinah gained today, at login (`a5`) and each gain (`a6`):
+            // `<kinah u64> <now u64 ms>`, at most the daily 1000000, the
+            // time between 2025 and 2028.
+            Some([op @ (0xA5 | 0xA6), 0xFF]) if body.len() == 16 => {
+                let kinah = u64::from_le_bytes(body[..8].try_into().unwrap());
+                let at = i64::from_le_bytes(body[8..].try_into().unwrap());
+                if kinah <= 1_000_000 && (1_735_689_600_000..1_861_920_000_000).contains(&at) {
+                    self.data_storage.set_kinah_today(kinah, at, *op == 0xA5);
+                }
+            }
+            // Abyss Points this week and the week's limit: `<points u64>
+            // <limit u64>`.
+            Some([0xA9, 0xFF]) if body.len() == 16 => {
+                let points = u64::from_le_bytes(body[..8].try_into().unwrap());
+                let limit = u64::from_le_bytes(body[8..].try_into().unwrap());
+                if (1..=1_000_000_000).contains(&limit) && points <= limit {
+                    let now = self.override_timestamp.unwrap_or_else(crate::clock::now_ms);
+                    self.data_storage.set_abyss_points(points, limit, now);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // ===== STAGGER GAUGE (05 E0) =====
+
+    /// A monster's stagger gauge, sent after every hit that takes stagger off
+    /// it:
+    ///
+    /// ```text
+    /// <len> 05 E0 <entity varint> 03 01 <max u32 LE> <rest u32 LE> <status u8>   its state
+    /// <len> 05 E0 <entity varint> 00 03 02                                         broken
+    /// ```
+    ///
+    /// The gauge counts down: `rest` is what is left. No update ever has
+    /// `rest` 0: the break is its own record. `max` is its size
+    /// (40 on Transcendent Bakarma in Story mode, solo; 150 on the two
+    /// minibosses before it). Who took what off it is `combat::stagger`'s.
+    ///
+    /// Seen on 2026-10-22 (Global EU, Story mode, solo Templar): 45 records,
+    /// all at the top level, none in a bundle (read there all the same,
+    /// since bundled packets come through here too). Punishment taking
+    /// Bakarma (entity 54651, `fb aa 03`) from 40 to 5:
+    /// `14 05e0 fbaa03 0301 28000000 05000000 02`, and Annihilate breaking a
+    /// miniboss (24627) at 9 left: `0c 05e0 b3c001 000302`.
+    ///
+    /// The status byte, as far as three monsters show it: `02` active (the
+    /// usual), `03` once as Bakarma's gauge came on at its phase (`02` 150 ms
+    /// later), `00` then `01` back at full after a wipe. Once after that reset
+    /// came `03 01 3c000000 28000000 00` (max 60, rest 40), not understood.
+    /// It is logged; it decides nothing but when a window opens.
+    fn parse_stagger_gauge_packet(&self, packet: &[u8]) {
+        match stagger_gauge_record(packet) {
+            Some(StaggerRecord::Gauge { entity, max, rest, status }) => {
+                self.data_storage.note_stagger_gauge(entity, max, rest, status);
+            }
+            Some(StaggerRecord::Break { entity }) => self.data_storage.note_stagger_break(entity),
+            None => {}
+        }
+    }
+
+    // ===== OWN STATS (4A 36) =====
+
+    /// `<len> 4A 36 <entity_id varint> ...`: a record the server sends about
+    /// the local player only (see `DataStorage::note_self_stats`). What it
+    /// carries is not decoded.
+    fn parse_self_stats_packet(&self, packet: &[u8]) {
+        let length_info = read_varint(packet, 0);
+        if length_info.length <= 0 {
+            return;
+        }
+        let offset = length_info.length as usize;
+        if offset + 3 >= packet.len() || packet[offset] != 0x4A || packet[offset + 1] != 0x36 {
+            return;
+        }
+        let id = read_varint(packet, offset + 2);
+        if id.length > 0 {
+            self.data_storage.note_self_stats(id.value);
         }
     }
 
@@ -358,7 +685,8 @@ impl StreamProcessor {
         }
         pos += skip_info.length as usize;
 
-        // Death flag: 1 = zone-init (entity loaded dead), 3 = combat death
+        // Death flag: 1 = zone-init (entity loaded dead), 3 = combat death,
+        // 7 = gone from the world.
         let flag_info = read_varint(packet, pos);
         if flag_info.length <= 0 {
             return;
@@ -367,6 +695,11 @@ impl StreamProcessor {
         if flag_info.value == 3 {
             tracing::trace!("Death event: entity {} killed in combat", entity_id);
             self.data_storage.mark_entity_dead(entity_id);
+        }
+        // Only under the current opcode: under the old one (`41 36`, now the
+        // spawn) a summon's spawn mask can read as flag 7.
+        if flag_info.value == DESPAWN_FLAG && packet[offset] == 0x42 {
+            self.data_storage.note_despawn(entity_id);
         }
     }
 
@@ -399,8 +732,9 @@ impl StreamProcessor {
         offset += 1;
         // Effect type: 0x02/0x0A = damage; 0x01/0x09 = heal; 0x0B = HoT.
         // 0x00 = status, 0x08 = buff. Exact match, NOT bitmask — 0x0B (HoT) has bit
-        // 1 set and would leak through a mask.
-        let is_damage = effect_type == 0x02 || effect_type == 0x0A;
+        // 1 set and would leak through a mask. Damage into a shield adds 0x04
+        // (0x06/0x0E), with the absorbing effects after the amount (#94).
+        let is_damage = matches!(effect_type, 0x02 | 0x0A | 0x06 | 0x0E);
         let is_heal = effect_type == 0x01 || effect_type == 0x09 || effect_type == 0x0B;
         if !is_damage && !is_heal {
             return;
@@ -445,11 +779,15 @@ impl StreamProcessor {
                 skill_code,
                 amount_info.value as i64,
                 effect_type == 0x0B,
+                self.override_timestamp.unwrap_or_else(crate::clock::now_ms),
             );
             return;
         }
 
         // Damage DoT: gated by the curated dot-skill allowlist.
+        // A tick may have taken stagger, if no hit is waiting for the gauge.
+        self.data_storage.note_stagger_hit(target_info.value, actor_info.value, skill_code, true);
+
         if !self.dot_damage_skill_ids.contains(&skill_code) {
             tracing::trace!("DOT: skill {} not in dot_ids (set size={})", skill_code, self.dot_damage_skill_ids.len());
             return;
@@ -507,6 +845,9 @@ impl StreamProcessor {
         // Always store HP — the entity may not be in mob_data yet if spawn
         // packet arrived before the capture started
         self.data_storage.append_mob_hp(actor_id, hp_max_info.value);
+        // A party member's HP reaching 0 is how their death shows (Details'
+        // DPS chart marks it).
+        self.data_storage.note_hp(actor_id, hp_info.value);
 
         true
     }
@@ -514,42 +855,9 @@ impl StreamProcessor {
     // ===== SUMMON OWNERSHIP (04 8D) =====
 
     fn parse_summon_ownership_packet(&self, packet: &[u8]) -> bool {
-        let length_info = read_varint(packet, 0);
-        if length_info.length < 0 {
+        let Some((summon_id, owner_id, name)) = ownership_at_front(packet) else {
             return false;
-        }
-        let offset = length_info.length as usize;
-        if offset + 1 >= packet.len() {
-            return false;
-        }
-        if packet[offset] != 0x04 || packet[offset + 1] != 0x8D {
-            return false;
-        }
-
-        let mut pos = offset + 2;
-        let summon_info = read_varint(packet, pos);
-        if summon_info.length <= 0 || summon_info.value < 100 {
-            return false;
-        }
-        let summon_id = summon_info.value;
-        pos += summon_info.length as usize;
-
-        // Skip 4-byte fixed field
-        if pos + 4 > packet.len() {
-            return false;
-        }
-        pos += 4;
-
-        let owner_info = read_varint(packet, pos);
-        if owner_info.length <= 0 || owner_info.value < 100 {
-            return false;
-        }
-        let owner_id = owner_info.value;
-        pos += owner_info.length as usize;
-
-        if owner_id == summon_id {
-            return false;
-        }
+        };
 
         // Only link confirmed summons
         if self.data_storage.is_confirmed_summon(summon_id) {
@@ -557,15 +865,8 @@ impl StreamProcessor {
         }
 
         // Name field after owner ID
-        let meta_info = read_varint(packet, pos);
-        if meta_info.length > 0 {
-            pos += meta_info.length as usize;
-            if pos < packet.len() {
-                let name_len = packet[pos] as usize;
-                if (1..=36).contains(&name_len) && pos + 1 + name_len <= packet.len() {
-                    self.register_utf8_nickname(packet, owner_id, pos + 1, name_len);
-                }
-            }
+        if let Some((start, len)) = name {
+            self.register_utf8_nickname(packet, owner_id, start, len);
         }
 
         true
@@ -616,9 +917,16 @@ impl StreamProcessor {
             {
                 let h = disc + 3;
                 let cur = u32::from_le_bytes([data[h], data[h + 1], data[h + 2], data[h + 3]]);
-                // Sanity bound: real HP is well under this; rejects misparses.
-                if cur <= 100_000_000 {
+                // Sanity bound against misparses: 100 million, or the max HP
+                // the spawn gave, whichever is higher. World bosses have more
+                // (Watcher Kaira and Argo 810 million) and sent no live HP
+                // until under 100 million, about 12% left (#70).
+                let bound = self.data_storage.spawn_max_hp(id_info.value).unwrap_or(0).max(100_000_000);
+                if cur <= bound as u32 {
                     self.data_storage.set_mob_current_hp(id_info.value, cur as i32);
+                    // The same record carries players' HP, your own included
+                    // (`1b 92` has only the party's): their deaths and revives.
+                    self.data_storage.note_player_hp(id_info.value, cur as i32);
                 }
                 i = disc + 11;
                 continue;
@@ -628,129 +936,77 @@ impl StreamProcessor {
     }
 
     fn scan_for_embedded_04_8d(&self, data: &[u8]) -> bool {
-        let mut found_any = false;
-        let mut search_offset = 0;
-        let pattern: [u8; 2] = [0x04, 0x8D];
-
-        while search_offset + 1 < data.len() {
-            let idx = find_pattern(data, search_offset, &pattern);
-            if idx.is_none() {
-                break;
-            }
-            let idx = idx.unwrap();
-
-            search_offset = idx + 2;
-            if search_offset >= data.len() {
-                break;
-            }
-
-            let summon_info = read_varint(data, search_offset);
-            if summon_info.length <= 0 || !(100..=9_999_999).contains(&summon_info.value) {
+        let records = ownership_records(data);
+        for r in &records {
+            let (summon_id, owner_id, name) = (r.summon_id, r.owner_id, &r.name);
+            // You, killed by the player it names: not a loot record.
+            let me = self.data_storage.local_player_id();
+            if me == Some(summon_id as i64) && me != Some(owner_id as i64) {
+                self.data_storage.append_nickname(owner_id, name);
+                self.data_storage.note_player_server(name, r.server_id);
+                self.note_death(data, r);
                 continue;
             }
-            let summon_id = summon_info.value;
-
-            let fixed_field_start = search_offset + summon_info.length as usize;
-            if fixed_field_start + 4 > data.len() {
-                continue;
-            }
-
-            // The owner follows: `<owner varint> <server id u16 LE> <len><name>`.
-            // The server id was once matched as the literal bytes `E0 07` /
-            // `E2 07` (servers 2016 and 2018), which skipped every other server:
-            // a Sorcerer on Ventus (1305, bytes `19 05`) never got a name. Any id
-            // in the servers' 1000–2999 range is accepted now, and a candidate
-            // only counts when the owner id sits wholly after the fixed field and
-            // the whole name field is a name.
-            let after_fixed = fixed_field_start + 4;
-            // A zero there is no owner: the record a summon gets as it
-            // despawns, all zeros. The scan below then ran on into whatever
-            // followed, and found an "owner" in the next damage records: a
-            // Cleric's Divine Aura went to entity 10210, named "M", and showed
-            // as its own row (2026-10-04, Divine Auldor).
-            if data.get(after_fixed).is_none_or(|&b| b == 0) {
-                continue;
-            }
-            let scan_end = std::cmp::min(data.len().saturating_sub(2), after_fixed + 128);
-            let mut found = None;
-            for server_idx in after_fixed + 1..scan_end {
-                let server_id = u16::from_le_bytes([data[server_idx], data[server_idx + 1]]);
-                if !(1000..=2999).contains(&server_id) {
-                    continue;
-                }
-                // The owner `ed 74` (14957) ends in a byte that alone reads as
-                // an id too (`74`, 116); see `varint_ending_at`.
-                let owner_id = varint_ending_at(data, server_idx, after_fixed, 100..=99_999);
-                let Some(owner_id) = owner_id.filter(|&id| id != summon_id) else {
-                    continue;
-                };
-                let name_len_idx = server_idx + 2;
-                let name_len = data[name_len_idx] as usize;
-                let name_end = name_len_idx + 1 + name_len;
-                if !NAME_FIELD_BYTES.contains(&name_len) || name_end > data.len() {
-                    continue;
-                }
-                if let Some(name) = exact_name(&data[name_len_idx + 1..name_end]) {
-                    found = Some((owner_id, server_id, name, name_end));
-                    break;
-                }
-            }
-            let Some((owner_id, server_id, name, name_end)) = found else {
-                continue;
-            };
-
             if self.data_storage.is_confirmed_summon(summon_id) {
                 self.data_storage.append_summon(owner_id, summon_id);
             }
-            self.data_storage.append_nickname(owner_id, &name);
-            self.data_storage.note_player_server(&name, server_id);
+            self.data_storage.append_nickname(owner_id, name);
+            self.data_storage.note_player_server(name, r.server_id);
             // For a mob that was fought (it follows the mob's `35 38` despawn)
             // this is the loot owner, which so far has always been you.
             if !self.data_storage.is_confirmed_summon(summon_id)
                 && self.data_storage.is_damage_target(summon_id)
-                && self.data_storage.note_loot_owner(summon_id, owner_id, &name)
+                && self.data_storage.note_loot_owner(summon_id, owner_id, name)
             {
                 tracing::info!("loot record: local player '{}' -> entity {}", name, owner_id);
             }
-            found_any = true;
-
-            search_offset = name_end;
         }
+        !records.is_empty()
+    }
 
-        found_any
+    /// A death recap, from the kill record that names you (`r`), the legion
+    /// after its name: `<len u8> <utf8>`, none when 0.
+    fn note_death(&self, data: &[u8], r: &Ownership) {
+        let legion = data.get(r.field.end).and_then(|&len| {
+            let field = data.get(r.field.end + 1..r.field.end + 1 + len as usize)?;
+            let legion = std::str::from_utf8(field).ok()?;
+            (!legion.is_empty() && legion.chars().count() <= 24 && !legion.chars().any(char::is_control))
+                .then(|| legion.to_string())
+        });
+        let killer = Killer { id: r.owner_id, name: r.name.clone(), server_id: r.server_id, legion };
+        let at = self.override_timestamp.unwrap_or_else(crate::clock::now_ms);
+        let Some(mut recap) = self.data_storage.died(killer, at) else { return };
+        for skill in &mut recap.skills {
+            let name = self.skill_lookup.get_skill_name(self.normalize_skill_id(skill.id));
+            skill.name = (!name.is_empty()).then_some(name);
+        }
+        tracing::info!("death recap: killed by {} after {} hits", recap.killer.name, recap.hits);
+        self.data_storage.push_death_recap(recap);
     }
 
     // ===== EMBEDDED 40 36 SCAN =====
 
     fn scan_for_embedded_40_36(&mut self, data: &[u8]) {
-        let mut i = 0;
-        while i + 5 < data.len() {
-            // Spawn family shifted +1 in June 2026: mob/summon 0x40->0x41,
-            // player 0x44->0x45. Accept both old and new leading bytes.
-            if data[i + 1] == 0x36 && matches!(data[i], 0x40 | 0x41 | 0x44 | 0x45) {
-                if i > 0 && data[i - 1] == 0x00 {
-                    i += 2;
-                    continue;
-                }
-                let target_info = read_varint(data, i + 2);
-                if target_info.length > 0 && (100..=9_999_999).contains(&target_info.value) {
-                    if data[i] == 0x44 || data[i] == 0x45 {
-                        // 44/45 36 = player spawn — extract name
-                        self.parse_player_spawn_name(data, i + 2);
-                    } else {
-                        // 40/41 36 = summon/mob spawn
-                        let mut real_id = target_info.value;
-                        if real_id > 1_000_000 {
-                            real_id = (real_id & 0x3FFF) | 0x4000;
-                        }
-                        if !self.data_storage.is_mob(real_id) {
-                            self.parse_summon_spawn_at(data, i + 2);
-                        }
-                    }
-                }
-                i += 2 + target_info.length.max(0) as usize;
+        for (i, opcode, id) in embedded_spawns(data) {
+            if opcode == 0x44 || opcode == 0x45 {
+                // 44/45 36 = player spawn — extract name
+                self.parse_player_spawn_name(data, i + 2);
             } else {
-                i += 1;
+                // 40/41 36 = summon/mob spawn
+                let mut real_id = id;
+                if real_id > 1_000_000 {
+                    real_id = (real_id & 0x3FFF) | 0x4000;
+                }
+                // Already read (this spawn's own frame), unless it names
+                // another NPC: the game reuses entity ids, and Ritualist
+                // Garshim (2100077) spawned as 29091, an id a mob (2920174)
+                // had before, so the meter never knew him and showed none of
+                // his fight (2026-10-27).
+                let id_len = read_varint(data, i + 2).length.max(0) as usize;
+                let named = spawn_mob_code(data, i + 2 + id_len).map(|(code, _)| code);
+                if !self.data_storage.is_mob(real_id) || (named.is_some() && named != self.data_storage.mob_code(real_id)) {
+                    self.parse_summon_spawn_at(data, i + 2);
+                }
             }
         }
     }
@@ -847,68 +1103,22 @@ impl StreamProcessor {
     /// works when you are already loaded into a zone (where there is no login
     /// char-list and you never see your own spawn).
     fn scan_masked_identity(&self, data: &[u8]) {
-        if data.len() < 9 {
-            return;
-        }
-        let mut i = 0;
-        while i + 8 < data.len() {
-            if data[i + 1] != 0x36 {
-                i += 1;
-                continue;
-            }
-            // 0x33 = self, 0x45/0x44 = another player (pre/post the June 2026 shift).
-            let is_self = data[i] == 0x33;
-            if !is_self && data[i] != 0x45 && data[i] != 0x44 {
-                i += 1;
-                continue;
-            }
-            let id = read_varint(data, i + 2);
-            if id.length <= 0 || !(1..=9_999_999).contains(&id.value) {
-                i += 1;
-                continue;
-            }
-            // mask1 is 4 bytes; mask2 is the byte after it and gates the name.
-            let mask2_idx = i + 2 + id.length as usize + 4;
-            if mask2_idx + 1 >= data.len() || data[mask2_idx] & 0x01 == 0 {
-                i += 1;
-                continue;
-            }
-            let name_len = data[mask2_idx + 1] as usize;
-            if !NAME_FIELD_BYTES.contains(&name_len) || mask2_idx + 2 + name_len > data.len() {
-                i += 1;
-                continue;
-            }
-            let field = &data[mask2_idx + 2..mask2_idx + 2 + name_len];
-            let raw = match std::str::from_utf8(field) {
-                Ok(s) => s,
-                Err(_) => {
-                    i += 1;
-                    continue;
+        for record in masked_records(data) {
+            let id = record.id;
+            let Some(sanitized) = record.name else {
+                // A tutorial character's placeholder: still you, with no name,
+                // and on no server the record states.
+                self.data_storage.note_self_server(0);
+                if self.data_storage.set_local_identity_from_game(id as i64, None) {
+                    tracing::info!("self record: unnamed tutorial character -> entity {}", id);
                 }
-            };
-            // A new character plays the tutorial before it has a name; until
-            // then the game calls it `$` plus random letters and digits (seen:
-            // `$Kc03nyeQHr4`, entity 3877, on 2026-10-01). It is still you, so
-            // bind the entity, but with no name: a placeholder would be noise,
-            // and keeping the previous character's name would be wrong.
-            if is_self && is_placeholder_name(raw) {
-                if self.data_storage.set_local_identity_from_game(id.value as i64, None) {
-                    tracing::info!("self record: unnamed tutorial character -> entity {}", id.value);
-                }
-                i = mask2_idx + 2 + name_len;
-                continue;
-            }
-            // The whole field must be one clean name; otherwise we landed
-            // mid-record rather than on a real name string.
-            let Some(sanitized) = exact_name(field) else {
-                i += 1;
                 continue;
             };
-
-            self.data_storage.note_low_id_entity(id.value);
+            let after = record.field.end;
+            self.data_storage.note_low_id_entity(id);
             self.data_storage
-                .append_nickname_authoritative(id.value, &sanitized);
-            if is_self {
+                .append_nickname_authoritative(id, &sanitized);
+            if let Some((server, job)) = record.profile {
                 // The game's word on who you are replaces whatever name was
                 // configured. That name comes from the window title or the last
                 // session, and both go stale: the title does not change when a
@@ -916,34 +1126,38 @@ impl StreamProcessor {
                 // leaves the previous name behind.
                 if self
                     .data_storage
-                    .set_local_identity_from_game(id.value as i64, Some(sanitized.clone()))
+                    .set_local_identity_from_game(id as i64, Some(sanitized.clone()))
                 {
-                    tracing::info!("self record: local player '{}' -> entity {}", sanitized, id.value);
+                    tracing::info!("self record: local player '{}' -> entity {}", sanitized, id);
                 }
-                // Then your server (u16) and class (u32, the roster's encoding).
-                // The class has to read as one, so a record laid out some other
-                // way is not taken for a server.
-                let after = mask2_idx + 2 + name_len;
-                if let Some(rest) = data.get(after..after + 6) {
-                    let server = u16::from_le_bytes([rest[0], rest[1]]);
-                    let class = u32::from_le_bytes([rest[2], rest[3], rest[4], rest[5]]);
-                    let job = crate::entity::job_class::JobClass::from_roster_class(class);
-                    if (1000..3000).contains(&server) && job.is_some() {
-                        self.data_storage.note_player_server(&sanitized, server);
-                        // A byte, then level (u32). Confirmed by a level-up, 28
-                        // then 29 (Naicha, 2026-10-04), and against the roster's
-                        // levels for three other players.
-                        let level = data
-                            .get(after + 7..after + 11)
-                            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                            .filter(|l| (1..=99).contains(l));
-                        self.data_storage.note_self_profile(&sanitized, job, level);
+                self.data_storage.note_player_server(&sanitized, server);
+                self.data_storage.note_self_server(server);
+                // A byte, then level (u32). Confirmed by a level-up, 28
+                // then 29 (Naicha, 2026-10-04), and against the roster's
+                // levels for three other players. Only in the layout whose
+                // class reads as one.
+                let level = job
+                    .and(data.get(after + 7..after + 11))
+                    .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                    .filter(|l| (1..=99).contains(l));
+                self.data_storage.note_self_profile(&sanitized, job, level);
+                // Then the gear score (equipment item level), twice: 383 for
+                // Naicha (2026-10-04), 2040 for Nullception (2026-10-11, as the
+                // character sheet showed). Taken only when both copies agree.
+                let gear = |at: usize| {
+                    data.get(after + at..after + at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                };
+                if let (Some(_), Some(gs), Some(again)) = (level, gear(11), gear(15)) {
+                    if gs == again && (1..=100_000).contains(&gs) {
+                        self.data_storage.note_self_gear_score(&sanitized, gs as i32);
                     }
                 }
+                if let Some(cp) = self_combat_power(data.get(after..).unwrap_or_default()) {
+                    self.data_storage.note_self_combat_power(&sanitized, cp);
+                }
             } else {
-                tracing::debug!("player record: '{}' -> entity {}", sanitized, id.value);
+                tracing::debug!("player record: '{}' -> entity {}", sanitized, id);
             }
-            i = mask2_idx + 2 + name_len;
         }
     }
 
@@ -980,32 +1194,21 @@ impl StreamProcessor {
     /// It joins to in-world entities by NAME: `dbid` is an account id, unrelated
     /// to the session-scoped entity ids everything else uses.
     ///
-    /// Empty slots are encoded with a zero mask and an empty name; parsing stops
-    /// there because their short form would desync the walk.
+    /// Empty slots are encoded with a zero mask and an empty name, in a short
+    /// record of varying width; the walk re-acquires the next member past them.
     fn scan_party_roster(&self, data: &[u8]) {
-        if data.len() < 32 {
-            return;
-        }
-        let mut i = 0;
-        while i + 24 < data.len() {
-            if data[i] != 0x02 || data[i + 1] != 0x97 {
-                i += 1;
+        for roster in rosters(data) {
+            tracing::debug!(
+                "Party roster: {} members (complete={}, dungeon={})",
+                roster.members.len(),
+                roster.complete,
+                roster.dungeon_id
+            );
+            if self.data_storage.is_other_party(roster.party_key, &roster.members, roster.complete) {
                 continue;
             }
-            match parse_party_roster_at(data, i + 2) {
-                Some((members, complete, dungeon_id)) => {
-                    tracing::debug!(
-                        "Party roster: {} members (complete={}, dungeon={})",
-                        members.len(),
-                        complete,
-                        dungeon_id
-                    );
-                    self.data_storage.set_current_dungeon(dungeon_id);
-                    self.data_storage.set_party_roster(members, complete);
-                    i += 2;
-                }
-                None => i += 1,
-            }
+            self.data_storage.set_current_dungeon(roster.dungeon_id);
+            self.data_storage.set_party_roster_of(Some(roster.party_key), roster.members, roster.complete);
         }
     }
 
@@ -1016,24 +1219,11 @@ impl StreamProcessor {
     /// than hunting for the literal `0x07` that older builds happened to put in
     /// the `mask2` slot.
     fn parse_player_spawn_name(&self, data: &[u8], offset_after_opcode: usize) {
-        let actor_info = read_varint(data, offset_after_opcode);
-        // Raid/invasion player ids run well past 99,999, so accept the full entity-id
-        // range (matching the embedded-scan gate) or those spawns are silently dropped.
-        if actor_info.length <= 0 || !(1..=9_999_999).contains(&actor_info.value) {
-            return;
-        }
-        let actor_id = actor_info.value;
-        let mask2_idx = offset_after_opcode + actor_info.length as usize + 4;
-        if mask2_idx + 1 >= data.len() || data[mask2_idx] & 0x01 == 0 {
-            return;
-        }
-        let name_len = data[mask2_idx + 1] as usize;
-        if !NAME_FIELD_BYTES.contains(&name_len) || mask2_idx + 2 + name_len > data.len() {
-            return;
-        }
-        let Some(sanitized) = exact_name(&data[mask2_idx + 2..mask2_idx + 2 + name_len]) else {
+        let Some((actor_id, sanitized, field)) = player_spawn_at(data, offset_after_opcode) else {
             return;
         };
+        let profile = death_recap::Profile { name: Some(sanitized.clone()), ..death_recap::profile(&data[field.end..]) };
+        self.data_storage.note_player_profile(actor_id, profile);
         // 45/44 36 player spawn is an authoritative id↔name source.
         self.data_storage.note_low_id_entity(actor_id);
         self.data_storage.note_player_spawn(actor_id);
@@ -1063,6 +1253,14 @@ impl StreamProcessor {
         // Mob/summon spawn: 0x3640 pre-2026-06, 0x3641 after the shift.
         if packet[offset] != 0x40 && packet[offset] != 0x41 {
             return false;
+        }
+        if packet[offset] == 0x41
+            && let Some((max, rest)) = spawn_stagger_gauge(packet)
+        {
+            let entity = read_varint(packet, offset + 2);
+            if entity.length > 0 {
+                self.data_storage.note_stagger_spawn(entity.value, max, rest);
+            }
         }
         self.parse_summon_spawn_at(packet, offset + 2)
     }
@@ -1131,36 +1329,23 @@ impl StreamProcessor {
         // *owner's* character name, and it is the fallback that attributes a pet's
         // damage to its player when no parent_key is present. A silently
         // mispositioned gate shows up as summons drifting back into their own rows.
-        const MASK_U16_SUBTREE: usize = 2;
-        const MASK_U32_SUBTREE: usize = 4;
-
-        let read_name_at = |sub_offset: usize| -> Option<(String, usize)> {
-            let gate = *packet.get(offset + sub_offset)?;
-            if gate & 0x01 == 0 {
-                return None;
-            }
-            let cursor = offset + sub_offset + 1;
-            let name_len = *packet.get(cursor)? as usize;
-            if !NAME_FIELD_BYTES.contains(&name_len) || cursor + 1 + name_len > packet.len() {
-                return None;
-            }
-            // The whole field must be a name. This check is what makes trying
-            // two positions safe: a wrong guess almost never decodes cleanly.
-            let name = exact_name(&packet[cursor + 1..cursor + 1 + name_len])?;
-            Some((name, cursor + 1 + name_len))
-        };
-
-        // Current format first, so a live stream never depends on the fallback.
-        let (spawn_name, cursor) = match read_name_at(MASK_U32_SUBTREE)
-            .or_else(|| read_name_at(MASK_U16_SUBTREE))
-        {
-            Some((name, next)) => (Some(name), next),
+        let (spawn_name, cursor) = match spawn_name_at(packet, offset) {
+            Some((name, field)) => (Some(name), field.end),
             None => (None, offset + MASK_U32_SUBTREE + 1),
         };
 
         // Mob type / boss flag / HP still come from the existing scan, which
         // anchors on the model field this cursor now sits on.
-        self.extract_and_register_mob_type(packet, offset, real_actor_id);
+        let code = self.extract_and_register_mob_type(packet, offset, real_actor_id);
+
+        // A monster's summon names a player too, the one it targets: a Blazing
+        // Totem linked to the player it burned, and its Burn ticks on them
+        // counted as their healing (2026-10-05). The NPC table says whose it
+        // can be. Only this record's code: an id keeps the code of the last
+        // entity under it, and a spirit spawns with none.
+        if code.is_some_and(|c| self.npc_lookup.is_no_players_summon(c)) {
+            return false;
+        }
 
         // A `0x1C` effect entity is parented to the skill's TARGET, not its
         // caster, so its parent_key must never be treated as an owner. Its name,
@@ -1179,6 +1364,7 @@ impl StreamProcessor {
                 real_actor_id,
                 owner_id
             );
+            self.name_summon_owner(owner_id, spawn_name.as_deref());
             return true;
         }
 
@@ -1216,7 +1402,67 @@ impl StreamProcessor {
             }
         }
 
+        // A Sorcerer's lingering ground spell (Cold Storm, Bittercold Wind) also
+        // spawns as `0x1F` (some as `0x5F`), but its buff block names the spell
+        // itself. Its caster follows the spawn position as `07 02 06` or
+        // `07 02 01` and a `u32`. Over every 0x1F/0x5F spawn in the check kit's
+        // captures that deals class damage, this matched the existing link 2,759
+        // times, added 4 (each a same-class player) and was wrong 0 times.
+        if matches!(kind, 0x1F | 0x5F)
+            && let Some(caster) = self.find_effect_caster(packet, offset, real_actor_id)
+        {
+            self.data_storage.note_low_id_entity(caster);
+            self.data_storage
+                .register_confirmed_summon_by_id(real_actor_id, caster);
+            if kind == 0x5F {
+                self.name_summon_owner(caster, spawn_name.as_deref());
+            }
+            return true;
+        }
+
         false
+    }
+
+    /// A summon's (`0x5F`) spawn states its owner twice, by name and by
+    /// entity id, so it names a player whose own spawn the meter missed.
+    ///
+    /// A player is named by their spawn (`45 36`) when they come into view,
+    /// and you by your self record on a zone load. A meter started, or a
+    /// capture begun, inside an instance has missed both, and a party member
+    /// stays `#id` until something re-sends them: replaying a 2026-10-09
+    /// dungeon run from just before its last boss, a Ranger's pets named
+    /// her (entity 15961) from the first second, and her spawn came two
+    /// minutes into the fight. Over the check kit's captures and that run,
+    /// 329 summon spawns read this way, and each named its owner as the
+    /// game's own records for that id did.
+    ///
+    /// Only for a summon. A `0x1F` effect's caster field can be the boss
+    /// its mechanic hangs on, while its name is the player it targets: a
+    /// boss whose own spawn was missed would have taken each party
+    /// member's name in turn. A name the game stated elsewhere is never
+    /// replaced (`append_nickname`'s gate).
+    fn name_summon_owner(&self, owner_id: i32, name: Option<&str>) {
+        let Some(name) = name else { return };
+        if self.data_storage.has_nickname(owner_id) || self.data_storage.is_mob(owner_id) {
+            return;
+        }
+        tracing::info!("Summon spawn: owner {} is '{}'", owner_id, name);
+        self.data_storage.append_nickname(owner_id, name);
+    }
+
+    /// The caster of a ground spell: the `u32` after the `07 02 06` or
+    /// `07 02 01` that follows the spawn position. Never the spell itself or a
+    /// known mob.
+    fn find_effect_caster(&self, packet: &[u8], start_offset: usize, self_id: i32) -> Option<i32> {
+        let end = packet.len().min(start_offset + 240);
+        let at = packet
+            .get(start_offset..end)?
+            .windows(3)
+            .position(|w| w[0] == 0x07 && w[1] == 0x02 && (w[2] == 0x06 || w[2] == 0x01))?;
+        let i = start_offset + at + 3;
+        let caster = i32::from_le_bytes(packet.get(i..i + 4)?.try_into().ok()?);
+        ((100..=9_999_999).contains(&caster) && caster != self_id && !self.data_storage.is_mob(caster))
+            .then_some(caster)
     }
 
     /// Find the `parent_key` a `41 36` spawn declares via `mask & 0x0010`.
@@ -1261,123 +1507,44 @@ impl StreamProcessor {
         -1
     }
 
-    fn extract_and_register_mob_type(&self, packet: &[u8], start_offset: usize, real_actor_id: i32) {
-        let mut scan_offset = start_offset;
-        let max_scan = std::cmp::min(packet.len().saturating_sub(2), start_offset + 60);
+    /// The NPC code this record names, if it names one.
+    fn extract_and_register_mob_type(&self, packet: &[u8], start_offset: usize, real_actor_id: i32) -> Option<i32> {
+        let (mob_type_id, scan_offset) = spawn_mob_code(packet, start_offset)?;
+        self.data_storage.append_mob(real_actor_id, mob_type_id);
 
-        while scan_offset < max_scan {
-            if packet[scan_offset] == 0x00
-                && (packet[scan_offset + 1] == 0x40 || packet[scan_offset + 1] == 0x00)
-                && packet[scan_offset + 2] == 0x02
-            {
-                if scan_offset >= start_offset + 3 {
-                    let b1 = packet[scan_offset - 3] as i32;
-                    let b2 = packet[scan_offset - 2] as i32;
-                    let b3 = packet[scan_offset - 1] as i32;
-                    let mob_type_id = b1 | (b2 << 8) | (b3 << 16);
-                    self.data_storage.append_mob(real_actor_id, mob_type_id);
+        // Register boss entities from NPC DB
+        if self.npc_lookup.is_boss(mob_type_id) {
+            self.data_storage.register_boss(real_actor_id);
+        }
+        if self.npc_lookup.is_training_dummy(mob_type_id) {
+            self.data_storage.register_training_dummy(real_actor_id);
+        }
 
-                    // Register boss entities from NPC DB
-                    if self.npc_lookup.is_boss(mob_type_id) {
-                        self.data_storage.register_boss(real_actor_id);
-                    }
-                    if self.npc_lookup.is_training_dummy(mob_type_id) {
-                        self.data_storage.register_training_dummy(real_actor_id);
-                    }
-
-                    // Try to extract HP
-                    let mut hp_scan = scan_offset + 3;
-                    let hp_end = std::cmp::min(packet.len().saturating_sub(2), hp_scan + 64);
-                    while hp_scan < hp_end {
-                        if packet[hp_scan] == 0x01 {
-                            let current_hp = read_varint(packet, hp_scan + 1);
-                            if current_hp.length > 0 && current_hp.value > 0 {
-                                let max_hp = read_varint(packet, hp_scan + 1 + current_hp.length as usize);
-                                if max_hp.length > 0 && max_hp.value >= current_hp.value {
-                                    self.data_storage.append_mob_hp(real_actor_id, max_hp.value);
-                                    break;
-                                }
-                            }
-                        }
-                        hp_scan += 1;
+        // Try to extract HP
+        let mut hp_scan = scan_offset + 3;
+        let hp_end = std::cmp::min(packet.len().saturating_sub(2), hp_scan + 64);
+        while hp_scan < hp_end {
+            if packet[hp_scan] == 0x01 {
+                let current_hp = read_varint(packet, hp_scan + 1);
+                if current_hp.length > 0 && current_hp.value > 0 {
+                    let max_hp = read_varint(packet, hp_scan + 1 + current_hp.length as usize);
+                    if max_hp.length > 0 && max_hp.value >= current_hp.value {
+                        self.data_storage.append_mob_hp(real_actor_id, max_hp.value);
+                        break;
                     }
                 }
-                break;
             }
-            scan_offset += 1;
+            hp_scan += 1;
         }
+        Some(mob_type_id)
     }
 
     // ===== ACTOR NAME BINDING =====
 
     fn parse_actor_name_binding_rules(&self, packet: &[u8]) -> bool {
-        let mut i = 0;
-        let mut last_anchor: Option<(i32, usize, usize)> = None; // (actor_id, start, end)
-        let mut named_actors = HashSet::new();
-
-        while i < packet.len() {
-            if packet[i] == 0x36 {
-                // Skip spawn opcodes (40/41 36 mob, 44/45 36 player) — the
-                // 0x36 family shifted +1 in June 2026.
-                if i > 0 && matches!(packet[i - 1], 0x40 | 0x41 | 0x44 | 0x45) {
-                    i += 1;
-                    continue;
-                }
-                if i + 1 >= packet.len() {
-                    i += 1;
-                    continue;
-                }
-                let actor_info = read_varint(packet, i + 1);
-                last_anchor = if actor_info.length > 0 && actor_info.value >= 100 {
-                    Some((actor_info.value, i, i + 1 + actor_info.length as usize))
-                } else {
-                    None
-                };
-                i += 1;
-                continue;
-            }
-
-            if packet[i] == 0x07 {
-                if let Some(name_info) = self.read_utf8_name(packet, i) {
-                    if let Some((actor_id, _, end_idx)) = last_anchor {
-                        if !named_actors.contains(&actor_id) {
-                            let distance = i as isize - end_idx as isize;
-                            if (0..=64).contains(&distance) {
-                                if self.register_utf8_nickname(packet, actor_id, name_info.0, name_info.1) {
-                                    named_actors.insert(actor_id);
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            i += 1;
-        }
-        false
-    }
-
-    fn read_utf8_name(&self, packet: &[u8], anchor_index: usize) -> Option<(usize, usize)> {
-        let length_index = anchor_index + 1;
-        if length_index >= packet.len() {
-            return None;
-        }
-        let name_length = packet[length_index] as usize;
-        if !(1..=36).contains(&name_length) {
-            return None;
-        }
-        let name_start = length_index + 1;
-        let name_end = name_start + name_length;
-        if name_end > packet.len() {
-            return None;
-        }
-        let name_bytes = &packet[name_start..name_end];
-        let name = std::str::from_utf8(name_bytes).ok()?;
-        let sanitized = sanitize_nickname(name)?;
-        if sanitized.is_empty() {
-            return None;
-        }
-        Some((name_start, name_length))
+        actor_name_fields(packet)
+            .into_iter()
+            .any(|(actor_id, name_start, name_length)| self.register_utf8_nickname(packet, actor_id, name_start, name_length))
     }
 
     fn register_utf8_nickname(&self, packet: &[u8], actor_id: i32, name_start: usize, name_length: usize) -> bool {
@@ -1411,72 +1578,12 @@ impl StreamProcessor {
 
     fn parse_loot_attribution_actor_name(&self, packet: &[u8]) -> bool {
         let mut candidates: std::collections::HashMap<i32, (String, Vec<u8>)> = std::collections::HashMap::new();
-        let mut idx = 0;
-
-        while idx + 2 < packet.len() {
-            let marker = packet[idx] as u32;
-            let marker_next = packet[idx + 1] as u32;
-            let is_marker = (0xF0..=0xFF).contains(&marker) && (marker_next == 0x03 || marker_next == 0xA3);
-
-            if is_marker {
-                // Scan backward for actor ID
-                let mut actor_info: Option<VarIntResult> = None;
-                let min_offset = idx.saturating_sub(8);
-                for actor_offset in min_offset..idx {
-                    if !can_read_varint(packet, actor_offset) {
-                        continue;
-                    }
-                    let candidate = read_varint(packet, actor_offset);
-                    if candidate.length <= 0 || actor_offset + candidate.length as usize != idx {
-                        continue;
-                    }
-                    if !(100..=99999).contains(&candidate.value) {
-                        continue;
-                    }
-                    actor_info = Some(candidate);
-                    break;
-                }
-
-                let actor_info = match actor_info {
-                    Some(a) => a,
-                    None => { idx += 1; continue; }
-                };
-
-                let length_idx = idx + 2;
-                if length_idx >= packet.len() {
-                    idx += 1;
-                    continue;
-                }
-                let name_length = packet[length_idx] as usize;
-                if !(1..=36).contains(&name_length) {
-                    idx += 1;
-                    continue;
-                }
-                let name_start = length_idx + 1;
-                let name_end = name_start + name_length;
-                if name_end > packet.len() {
-                    idx += 1;
-                    continue;
-                }
-                let name_bytes = &packet[name_start..name_end];
-                let name = match std::str::from_utf8(name_bytes) {
-                    Ok(s) => s,
-                    Err(_) => { idx = name_end; continue; }
-                };
-                let sanitized = match sanitize_nickname(name) {
-                    Some(s) => s,
-                    None => { idx = name_end; continue; }
-                };
-
-                let actor_id = actor_info.value;
-                let existing = candidates.get(&actor_id);
-                if existing.is_none() || name_bytes.len() > existing.unwrap().1.len() {
-                    candidates.insert(actor_id, (sanitized, name_bytes.to_vec()));
-                }
-                idx = name_end;
-                continue;
+        for (actor_id, sanitized, field) in loot_actor_fields(packet) {
+            let name_bytes = &packet[field];
+            let existing = candidates.get(&actor_id);
+            if existing.is_none() || name_bytes.len() > existing.unwrap().1.len() {
+                candidates.insert(actor_id, (sanitized, name_bytes.to_vec()));
             }
-            idx += 1;
         }
 
         if candidates.is_empty() {
@@ -1513,204 +1620,11 @@ impl StreamProcessor {
     // ===== NICKNAME PARSING =====
 
     fn parsing_nickname(&self, packet: &[u8]) -> bool {
-        let mut parsed_any = false;
-        let mut search_offset = 0;
-
-        while search_offset + 2 < packet.len() {
-            // PATTERN A: E2/E0 07 anchor
-            if (packet[search_offset] == 0xE2 || packet[search_offset] == 0xE0)
-                && packet[search_offset + 1] == 0x07
-            {
-                let len_idx = search_offset + 2;
-                if len_idx < packet.len() {
-                    let name_len = packet[len_idx] as usize;
-                    if (2..=36).contains(&name_len) && len_idx + 1 + name_len <= packet.len() {
-                        let np = &packet[len_idx + 1..len_idx + 1 + name_len];
-                        if let Ok(possible_name) = std::str::from_utf8(np) {
-                            if !possible_name.is_empty() && possible_name.chars().next().unwrap().is_alphanumeric() {
-                                if let Some(sanitized) = sanitize_nickname(possible_name) {
-                                    if sanitized.len() >= 2
-                                        && let Some(id) = varint_ending_at(packet, search_offset, 0, 100..=9_999_999)
-                                    {
-                                        self.data_storage.append_nickname(id, &sanitized);
-                                        parsed_any = true;
-                                        search_offset = len_idx + 1 + name_len;
-                                        // Skip guild name
-                                        search_offset = self.skip_guild_name(packet, search_offset);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // PATTERN B: 0F 1D 37 block anchor
-            if search_offset + 2 < packet.len()
-                && packet[search_offset] == 0x0F
-                && packet[search_offset + 1] == 0x1D
-                && packet[search_offset + 2] == 0x37
-            {
-                let id_offset = search_offset + 3;
-                if can_read_varint(packet, id_offset) {
-                    let block_actor = read_varint(packet, id_offset);
-                    if (100..=9_999_999).contains(&block_actor.value) {
-                        let mut block_scan = id_offset + block_actor.length as usize;
-                        let block_end = std::cmp::min(packet.len(), block_scan + 500);
-
-                        while block_scan + 3 < block_end {
-                            // Stop at terminator. The leading byte changed
-                            // 0x06 -> 0x0E in the June 2026 update; accept both.
-                            if (packet[block_scan] == 0x06 || packet[block_scan] == 0x0E) && packet[block_scan + 1] == 0x00 && packet[block_scan + 2] == 0x36 {
-                                break;
-                            }
-                            // Name must be preceded by 00 00
-                            if packet[block_scan] == 0x00 && packet[block_scan + 1] == 0x00 {
-                                let len_idx = block_scan + 2;
-                                if len_idx < packet.len() {
-                                    let name_len = packet[len_idx] as usize;
-                                    if (2..=36).contains(&name_len) && len_idx + 1 + name_len <= packet.len() {
-                                        let np = &packet[len_idx + 1..len_idx + 1 + name_len];
-                                        if let Ok(possible_name) = std::str::from_utf8(np) {
-                                            if !possible_name.is_empty() && possible_name.chars().next().unwrap().is_alphanumeric() {
-                                                if let Some(sanitized) = sanitize_nickname(possible_name) {
-                                                    if sanitized.len() >= 2 {
-                                                        self.data_storage.append_nickname(block_actor.value, &sanitized);
-                                                        parsed_any = true;
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            block_scan += 1;
-                        }
-                    }
-                }
-            }
-
-            // PATTERN D: Terminator anchor (04/00 4C)
-            if search_offset + 1 < packet.len() {
-                let b0 = packet[search_offset] as u32;
-                let b1 = packet[search_offset + 1] as u32;
-
-                if (b0 == 0x04 || b0 == 0x00) && b1 == 0x4C {
-                    let id_idx = search_offset + 2;
-                    if can_read_varint(packet, id_idx) {
-                        let player_info = read_varint(packet, id_idx);
-                        if player_info.length > 0 && (100..=9_999_999).contains(&player_info.value) {
-                            let stop_at = std::cmp::min(packet.len().saturating_sub(2), id_idx + 128);
-                            let mut scan_idx = id_idx + player_info.length as usize;
-
-                            while scan_idx < stop_at {
-                                // Terminator: leading byte changed 0x06 -> 0x0E
-                                // in the June 2026 update; accept both.
-                                if (packet[scan_idx] == 0x06 || packet[scan_idx] == 0x0E)
-                                    && packet[scan_idx + 1] == 0x00
-                                    && packet[scan_idx + 2] == 0x36
-                                {
-                                    // Look backwards for name
-                                    for test_len in 2..=36usize {
-                                        if scan_idx < test_len + 1 + id_idx {
-                                            continue;
-                                        }
-                                        let len_byte_idx = scan_idx - test_len - 1;
-                                        if len_byte_idx <= id_idx {
-                                            continue;
-                                        }
-                                        let possible_len = packet[len_byte_idx] as usize;
-                                        if possible_len == test_len {
-                                            let np = &packet[len_byte_idx + 1..len_byte_idx + 1 + test_len];
-                                            if let Ok(possible_name) = std::str::from_utf8(np) {
-                                                if !possible_name.is_empty() && possible_name.chars().next().unwrap().is_alphanumeric() {
-                                                    if let Some(sanitized) = sanitize_nickname(possible_name) {
-                                                        if sanitized.len() >= 2 {
-                                                            // Try to find earlier name (player name vs guild)
-                                                            let before_name = self.find_name_before(
-                                                                packet, len_byte_idx,
-                                                                id_idx + player_info.length as usize,
-                                                            );
-                                                            let final_name = before_name.unwrap_or(sanitized);
-                                                            self.data_storage.append_nickname(player_info.value, &final_name);
-                                                            parsed_any = true;
-                                                            search_offset = scan_idx;
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    break;
-                                }
-                                scan_idx += 1;
-                            }
-                        }
-                    }
-                }
-            }
-
-            search_offset += 1;
+        let fields = nickname_fields(packet);
+        for (id, name, _) in &fields {
+            self.data_storage.append_nickname(*id, name);
         }
-        parsed_any
-    }
-
-    fn find_name_before(&self, packet: &[u8], before_idx: usize, min_idx: usize) -> Option<String> {
-        for test_len in 2..=36usize {
-            for gap in 0..=1usize {
-                if before_idx < gap + test_len + 1 {
-                    continue;
-                }
-                let name_len_idx = before_idx - gap - test_len - 1;
-                if name_len_idx < min_idx {
-                    continue;
-                }
-                let possible_len = packet[name_len_idx] as usize;
-                if possible_len != test_len {
-                    continue;
-                }
-                let np = &packet[name_len_idx + 1..name_len_idx + 1 + test_len];
-                if let Ok(possible_name) = std::str::from_utf8(np) {
-                    if possible_name.is_empty() || !possible_name.chars().next().unwrap().is_alphanumeric() {
-                        continue;
-                    }
-                    if let Some(sanitized) = sanitize_nickname(possible_name) {
-                        if sanitized.len() >= 2 {
-                            return Some(sanitized);
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    fn skip_guild_name(&self, packet: &[u8], start_index: usize) -> usize {
-        if start_index >= packet.len() {
-            return start_index;
-        }
-        let mut offset = start_index;
-        if packet[offset] == 0x00 {
-            offset += 1;
-            if offset >= packet.len() {
-                return offset;
-            }
-        }
-        let length = packet[offset] as usize;
-        if !(1..=36).contains(&length) {
-            return offset;
-        }
-        let name_start = offset + 1;
-        let name_end = name_start + length;
-        if name_end > packet.len() {
-            return offset;
-        }
-        if std::str::from_utf8(&packet[name_start..name_end]).is_err() {
-            return offset;
-        }
-        name_end
+        !fields.is_empty()
     }
 
     // ===== EMBEDDED DAMAGE PACKET =====
@@ -1809,8 +1723,11 @@ impl StreamProcessor {
                 None => break,
             };
             let and_result = switch_value & mask;
+            // Switch bit 0x04: the record has a value. Without it, the hit
+            // type says why: a miss or a resist, read below and counted.
+            let no_value = matches!(and_result, 0 | 2);
 
-            if !(4..=7).contains(&and_result) {
+            if !(4..=7).contains(&and_result) && !no_value {
                 break;
             }
 
@@ -1842,8 +1759,14 @@ impl StreamProcessor {
                 break;
             }
 
-            // Skip 7-digit NPC skills
-            if (1_000_000..=9_999_999).contains(&exact_skill_code) {
+            // A 7-digit skill is an NPC's: a monster hitting a player. Its
+            // damage is what the player took (DataStorage::append_damage); it
+            // used to be dropped here, so Damage Taken stayed 0 (Gatekeeper
+            // Pinopi, 2026-10-15).
+            let npc_skill = (1_000_000..=9_999_999).contains(&exact_skill_code);
+            // Only a known monster's hit on a known player; any other NPC
+            // skill is still dropped, as it always was.
+            if npc_skill && !(self.data_storage.is_mob(actor_value) && self.data_storage.is_known_player(target_value)) {
                 break;
             }
 
@@ -1858,6 +1781,23 @@ impl StreamProcessor {
             };
             let damage_type = dummy_type as u8;
 
+            // Hit type 1 (Miss) and 6 (Resist) carry no damage: count them on
+            // the skill and stop here, as the parser always did on these.
+            if no_value {
+                // An entry of a hit with no value at all (switch 0) marks the
+                // hit before it as one that took stagger (`combat::stagger`).
+                if switch_value == 0 && !npc_skill {
+                    self.data_storage.note_stagger_hit_entry(target_value, actor_value, exact_skill_code as i32);
+                }
+                if !require_trusted && actor_value != target_value && !npc_skill {
+                    if let Some(kind) = NoDamageHit::from_hit_type(dummy_type) {
+                        let skill = self.normalize_skill_id(exact_skill_code as i32);
+                        self.data_storage.append_no_damage_hit(target_value, actor_value, skill, kind);
+                    }
+                }
+                break;
+            }
+
             let temp_v: usize = match and_result {
                 5 => 12,
                 6 => 10,
@@ -1865,37 +1805,36 @@ impl StreamProcessor {
                 _ => 8,
             };
 
-            // Special damage flags. Per the 2026-06 layout, the block after the
-            // skill code is: <damage_type/crit> <modifications byte> 00 <direction byte>.
+            // Switch bit 0x02: the game's damage plotter follows the hit type,
+            // `<flags byte> <restoration HP varint> <angle byte>`. The HP is
+            // two bytes from 128 up; `temp_v` counts it as one.
             let mut specials = Vec::new();
-            if [5, 6, 7].contains(&and_result) && offset < packet.len() {
-                // Modifications byte = attack-quality flags. Confirmed against the
-                // game combat log: Perfect=0x04 (15,276 [Perfect Critical]),
-                // Double=0x08 (60,876 [Double Critical]); 0x0c = Perfect+Double.
-                // Parry/Smite/PowerShard follow the same contiguous shift (inferred).
-                let mods = packet[offset] as u32;
-                if mods & 0x02 != 0 { specials.push(SpecialDamage::Parry); }
-                if mods & 0x04 != 0 { specials.push(SpecialDamage::Perfect); }
-                if mods & 0x08 != 0 { specials.push(SpecialDamage::Double); }
-                if mods & 0x20 != 0 { specials.push(SpecialDamage::Smite); }
-                if mods & 0x40 != 0 { specials.push(SpecialDamage::PowerShard); }
-                // Direction byte (2 later) = positional enum, NOT the modifications
-                // byte. Confirmed against the game combat log: 0x00 = no positional
-                // tag (untagged/parried hits), 0x01 = Back (12,030 [Back]),
-                // 0x02 = Front (14,561 [Front], 28,421 [Front Critical]).
-                if offset + 2 < packet.len() {
-                    match packet[offset + 2] {
-                        0x01 => specials.push(SpecialDamage::Back),
-                        0x02 => specials.push(SpecialDamage::Frontal),
-                        _ => {}
-                    }
+            let mut plotter_extra = 0;
+            if and_result & 0x02 != 0 {
+                let Some(plotter) = read_plotter(packet, offset) else { break };
+                // Flags byte, bit for bit the game's plotter fields. Verified
+                // per skill against the game's Damage Analyzer: Perfect 0x04,
+                // Double 0x08 (the game's HardHit, 강타). From the 2026-10-04
+                // captures (hit sizes, issue #5): Shield Block 0x01, Parry 0x02,
+                // Iron Wall 0x10, Regeneration 0x20, Perfect Block 0x40. 0x80
+                // is not a plotter field: it mirrors switch bit 0x10 and is
+                // fixed per skill.
+                specials = special_damage::from_hit_flags(plotter.flags);
+                // Angle byte. Verified against the combat log and the game's
+                // Damage Analyzer (BackAttackCount, FrontAttackCount per skill):
+                // 0x00 = no positional tag, 0x01 = Back, 0x02 = Front.
+                match plotter.angle {
+                    Some(0x01) => specials.push(SpecialDamage::Back),
+                    Some(0x02) => specials.push(SpecialDamage::Frontal),
+                    _ => {}
                 }
+                plotter_extra = plotter.hp_len - 1;
             }
             if damage_type == 3 {
                 specials.push(SpecialDamage::Critical);
             }
 
-            offset += temp_v;
+            offset += temp_v + plotter_extra;
             if offset >= packet.len() {
                 break;
             }
@@ -1905,7 +1844,6 @@ impl StreamProcessor {
                 Some(v) => v,
                 None => break,
             };
-            let mut after_first_offset = offset;
             let mut second_value = match try_read_varint(packet, &mut offset) {
                 Some(v) => v,
                 None => break,
@@ -1926,29 +1864,26 @@ impl StreamProcessor {
             // `note_power_scalar` records it for; see
             // `DpsCalculator::infer_summon_owners`.
             if first_value == 0 {
-                let after_second_offset = offset;
                 if let Some(third) = try_read_varint(packet, &mut offset) {
                     first_value = second_value;
-                    after_first_offset = after_second_offset;
                     second_value = third;
                 }
             }
 
-            let first_is_damage = should_treat_first_value_as_damage(first_value, second_value, and_result, damage_type as i32);
-
-            // When the damage is in `second_value`, `first_value` is the actor's
-            // power scalar (see above). Recorded per actor so a summon whose spawn
-            // packet never arrived can still be tied to its owner.
-            if !first_is_damage && (1_000..=200_000).contains(&first_value) {
+            // The damage is always the second value, crits included: the first
+            // is the actor's power scalar (see above). A crit was once read
+            // value-first when the first number looked like damage and the
+            // second was small, but that was the scalar every time a small hit
+            // (a DoT tick) crit: 2,182 of 2,206 such reads across 20 captures
+            // were the attacker's own scalar (issue #58).
+            //
+            // Recorded per actor so a summon whose spawn packet never arrived
+            // can still be tied to its owner.
+            if (1_000..=200_000).contains(&first_value) && !npc_skill {
                 self.data_storage.note_power_scalar(actor_value, first_value);
             }
 
-            let mut final_damage = if first_is_damage {
-                offset = after_first_offset;
-                first_value
-            } else {
-                second_value
-            };
+            let mut final_damage = second_value;
 
             // The tail after the value, checked against the game's own Damage
             // Analyzer record of the same fight (2026-10-04): layout 4 carries
@@ -2117,7 +2052,17 @@ impl StreamProcessor {
                 break;
             }
 
-            if actor_value != target_value {
+            if crate::entity::skill_group::restores_resource(exact_skill_code as i32) {
+                // MP (or another resource) restored, not HP: neither damage
+                // nor healing. A Water Spirit's attack sends one of these to
+                // its Spiritmaster (16990002, 20 MP), filed under 100011.
+            } else if actor_value != target_value {
+                // A hit with a value joins the target's batch for its next
+                // stagger gauge update (`combat::stagger`). The skill as the
+                // record has it, e.g. 12090243 for Punishment.
+                if !npc_skill {
+                    self.data_storage.note_stagger_hit(target_value, actor_value, exact_skill_code as i32, false);
+                }
                 let mut pdp = ParsedDamagePacket::new();
                 if let Some(ts) = self.override_timestamp {
                     pdp.set_timestamp(ts);
@@ -2143,8 +2088,13 @@ impl StreamProcessor {
                 // second_value, so `final_damage` is the correct heal amount. Recording
                 // it as healing makes the HEAL view capture instant self-heals, not just
                 // HoTs. (The cast-marker variant breaks out earlier on its and_result.)
-                self.data_storage
-                    .append_heal(actor_value, resolved_skill_code, final_damage as i64, false);
+                self.data_storage.append_heal(
+                    actor_value,
+                    resolved_skill_code,
+                    final_damage as i64,
+                    false,
+                    self.override_timestamp.unwrap_or_else(crate::clock::now_ms),
+                );
             }
 
             parsed_any = true;
@@ -2226,22 +2176,7 @@ impl StreamProcessor {
     // ===== HELPERS =====
 
     fn normalize_skill_id(&self, raw: i32) -> i32 {
-        if (30_000_000..=30_999_999).contains(&raw) {
-            return raw;
-        }
-        let base = raw - (raw % 10000);
-        let base_name = self.skill_lookup.get_skill_name(base);
-        if base_name.is_empty() {
-            return raw;
-        }
-        let raw_name = self.skill_lookup.get_skill_name(raw);
-        if raw_name.is_empty() {
-            return base;
-        }
-        if raw_name != base_name {
-            return raw;
-        }
-        base
+        normalize_skill_id(&self.skill_lookup, raw)
     }
 
     fn is_known_skill_code(&self, skill_code: i32) -> bool {
@@ -2268,6 +2203,91 @@ impl StreamProcessor {
 }
 
 // ===== FREE FUNCTIONS =====
+
+/// The skill code a hit record's code is shown under: its family's
+/// (12090243, Punishment, is 12090000) unless the table names it apart.
+pub fn normalize_skill_id(skill_lookup: &SkillLookup, raw: i32) -> i32 {
+    if (30_000_000..=30_999_999).contains(&raw) {
+        return raw;
+    }
+    let base = raw - (raw % 10000);
+    let base_name = skill_lookup.get_skill_name(base);
+    if base_name.is_empty() {
+        return raw;
+    }
+    let raw_name = skill_lookup.get_skill_name(raw);
+    if raw_name.is_empty() {
+        return base;
+    }
+    if raw_name != base_name {
+        return raw;
+    }
+    base
+}
+
+/// A stagger gauge record (`05 E0`, see
+/// `StreamProcessor::parse_stagger_gauge_packet`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StaggerRecord {
+    Gauge { entity: i32, max: u32, rest: u32, status: u8 },
+    Break { entity: i32 },
+}
+
+/// The `05 E0` record a framed packet is, if it is one, read to its last
+/// byte.
+pub fn stagger_gauge_record(packet: &[u8]) -> Option<StaggerRecord> {
+    let length_info = read_varint(packet, 0);
+    if length_info.length <= 0 {
+        return None;
+    }
+    let offset = length_info.length as usize;
+    if packet.get(offset..offset + 2)? != [0x05, 0xE0] {
+        return None;
+    }
+    let entity = read_varint(packet, offset + 2);
+    if entity.length <= 0 {
+        return None;
+    }
+    let body = packet.get(offset + 2 + entity.length as usize..)?;
+    match body {
+        [0x00, 0x03, 0x02] => Some(StaggerRecord::Break { entity: entity.value }),
+        [0x03, 0x01, rest @ ..] if rest.len() == 9 => Some(StaggerRecord::Gauge {
+            entity: entity.value,
+            max: parse_u32_le(rest, 0),
+            rest: parse_u32_le(rest, 4),
+            status: rest[8],
+        }),
+        _ => None,
+    }
+}
+
+/// The stagger gauge a monster's spawn (`41 36`) carries, (max, rest), in
+/// the same form as its `05 E0` updates, as the frame's last 15 bytes:
+///
+/// ```text
+/// ... 01 00 2d 00 00 00 | 03 01 <max u32> <rest u32> <4 bytes> 00
+/// ```
+///
+/// The 4 bytes differ per monster (`0e7253c5`, `b67153be`, `437253c9`) and
+/// are not decoded. Anchored on the frame's end, not on the end of the
+/// spawn's abnormal list: `capture::abnormal` finds that end only where
+/// `07 02` (`AFTER_SPAWN_LIST`) follows it, and no boss spawn has one (4 of
+/// the 129 spawns in the 2026-10-22 capture do, no boss among them); these
+/// have `01 00 2d 00 00 00` there.
+///
+/// Over those 129 spawns exactly three end this way, Bakarma (40/40) and the
+/// two minibosses (150/150), and each got `05 E0` updates later: no false
+/// match. A spawn that does not end this way has no gauge.
+pub fn spawn_stagger_gauge(packet: &[u8]) -> Option<(u32, u32)> {
+    let tail = packet.get(packet.len().checked_sub(15)?..)?;
+    if tail[0] != 0x03 || tail[1] != 0x01 || tail[14] != 0x00 {
+        return None;
+    }
+    let (max, rest) = (parse_u32_le(tail, 2), parse_u32_le(tail, 6));
+    // Generous bounds (the largest seen is 1200, Enhanced Harcon): only to
+    // turn away bytes that merely look like the ending.
+    (rest > 0 && rest <= max && max <= 100_000).then_some((max, rest))
+}
 
 /// The varint that ends just before `end`, starting no earlier than
 /// `min_start` and at most three bytes back, whose value is in `range`.
@@ -2330,6 +2350,241 @@ pub fn read_varint(bytes: &[u8], offset: usize) -> VarIntResult {
     }
 }
 
+/// Odyle energy's entry id (`01 87 93 03`), in every list and update seen,
+/// from several players.
+const ODYLE_ID: u32 = 60_000_001;
+
+/// Odyle energy as `(basic, charged)`, when among the entries.
+///
+/// The kind is which of basic and charged are sent, a zero being left out:
+/// `0c` both, `04` basic only (`04 01 87 93 03 c8 06`, 840 and 0, at a login
+/// on 2026-10-16), `08` charged only (`08 01 87 93 03 ab 0e`, 0 and 1835, in
+/// a player's log of 2026-10-15). Only the entry with the energy's id:
+/// another (`0c 61 00 0c 01 00 00 00 04 01 03`, id 1) was once read as 0
+/// basic, 0 charged.
+fn odyle_energy_in(entries: &[ContentEntry]) -> Option<(u32, u32)> {
+    // Generous bounds (the game's are 840, or 560 without a membership, and
+    // 2000): only to turn away bytes that merely look like the entry.
+    let ok = |n: u32| n <= 100_000;
+    let (_, v) = entries.iter().find(|(id, _)| *id == ODYLE_ID)?;
+    (ok(v[0]) && ok(v[1])).then_some((v[0], v[1]))
+}
+
+/// Odyle energy in a `0b 61` whose list doesn't read whole: its entry found
+/// by the id.
+fn odyle_energy_in_list(body: &[u8]) -> Option<(u32, u32)> {
+    let id = ODYLE_ID.to_le_bytes();
+    (0..body.len())
+        .filter(|&i| matches!(body[i], 0x04 | 0x08 | 0x0C) && body.get(i + 1..i + 5) == Some(&id[..]))
+        .find_map(|i| match content_entry_at(body, i)?.0 {
+            Entry::Count(entry) => odyle_energy_in(&[entry]),
+            Entry::Time(..) => None,
+        })
+}
+
+/// One entry count: its id and `[first, second]` value.
+pub type ContentEntry = (u32, [u32; 2]);
+/// The game's entry counts, by entry id.
+pub type ContentCounts = Vec<ContentEntry>;
+
+/// The entries holding a time instead of a count (kind `01`), by entry id:
+/// the Abyss passages' usage time left (ms), others' times.
+pub type ContentTimes = Vec<(u32, u64)>;
+
+/// The entries of a list or an update, counts and times apart.
+#[derive(Debug, Default)]
+pub struct ContentEntries {
+    pub counts: ContentCounts,
+    pub times: ContentTimes,
+}
+
+/// One entry: a count, or a time (id, u64).
+enum Entry {
+    Count(ContentEntry),
+    Time(u32, u64),
+}
+
+/// One entry of the entry counts read as the game lays it out, `<kind> <id
+/// u32 LE> <values>`: kind `00` no value (both 0), `01` a u64 (a time, not a
+/// count), `03` two u64, `04` the first value, `08` the second, `0c` both (varints). Odyle
+/// energy is id 60000001 (`01 87 93 03`), Shugo Festival keys id 1. Returns
+/// the entry and where the next begins. Ids seen run from 1 to 90000006 and
+/// counts stay in the thousands, so an id of 0 or past 99999999, or a count
+/// past a million, is not an entry.
+fn content_entry_at(body: &[u8], at: usize) -> Option<(Entry, usize)> {
+    let kind = *body.get(at)?;
+    let id = u32::from_le_bytes(body.get(at + 1..at + 5)?.try_into().ok()?);
+    if id == 0 || id > 99_999_999 {
+        return None;
+    }
+    let mut o = at + 5;
+    let mut v = [0u32; 2];
+    let value = |o: &mut usize| try_read_varint(body, o).filter(|&n| n <= 1_000_000).map(|n| n as u32);
+    match kind {
+        0x00 => {}
+        0x01 => {
+            let time = u64::from_le_bytes(body.get(o..o + 8)?.try_into().ok()?);
+            return Some((Entry::Time(id, time), o + 8));
+        }
+        // Id 3 came as two u64 on 2026-10-29 (23768000, 3600000): its time,
+        // and a second one not read.
+        0x03 => {
+            let time = u64::from_le_bytes(body.get(o..o + 8)?.try_into().ok()?);
+            body.get(o + 8..o + 16)?;
+            return Some((Entry::Time(id, time), o + 16));
+        }
+        0x04 => v[0] = value(&mut o)?,
+        0x08 => v[1] = value(&mut o)?,
+        0x0C => {
+            v[0] = value(&mut o)?;
+            v[1] = value(&mut o)?;
+        }
+        _ => return None,
+    }
+    Some((Entry::Count((id, v)), o))
+}
+
+impl ContentEntries {
+    fn push(&mut self, entry: Entry) {
+        match entry {
+            Entry::Count(count) => self.counts.push(count),
+            Entry::Time(id, time) => self.times.push((id, time)),
+        }
+    }
+}
+
+/// `count` entries from `at`, and where they end.
+fn content_entries(body: &[u8], mut at: usize, count: usize) -> Option<(ContentEntries, usize)> {
+    let mut out = ContentEntries::default();
+    for _ in 0..count {
+        let (entry, next) = content_entry_at(body, at)?;
+        out.push(entry);
+        at = next;
+    }
+    Some((out, at))
+}
+
+/// The whole list in a `0b 61`: `<count varint> <entries>`, the list being
+/// the rest of the record. Where other things come first, the list is found
+/// as the place from which a count of entries ends right at the end.
+fn content_counts_in_list(body: &[u8]) -> Option<ContentEntries> {
+    (0..body.len()).find_map(|start| {
+        let mut o = start;
+        let count = try_read_varint(body, &mut o)? as usize;
+        if count == 0 || count > 1000 {
+            return None;
+        }
+        let (entries, end) = content_entries(body, o, count)?;
+        (end == body.len() && entries.counts.iter().any(|(id, _)| *id == ODYLE_ID)).then_some(entries)
+    })
+}
+
+/// The entries that changed, in a `0c 61`: `<count u8> <entries> <tail>`.
+/// The first byte is not quite a count: updates with `00` there carry an
+/// entry too (`0c 61 00 08 01 87 93 03 ab 0e 03`, 2026-10-15). The tail
+/// seen is one byte after a `00` count and five (`01 <u32>`) after `01`, so
+/// entries that don't all read, or leave more than five bytes, are not an
+/// update.
+fn content_counts_in_update(body: &[u8]) -> Option<ContentEntries> {
+    let count = (*body.first()?).max(1) as usize;
+    let (out, end) = content_entries(body, 1, count)?;
+    ((!out.counts.is_empty() || !out.times.is_empty()) && body.len() - end <= 5).then_some(out)
+}
+
+/// The Daily Duty board in a `1c 8d` (see
+/// `StreamProcessor::parse_daily_duty_packet`): its offers and the next reset
+/// (unix ms). The whole record must read as a board, its reset ending it.
+fn daily_duty_board(body: &[u8]) -> Option<(Vec<DutyOffer>, i64)> {
+    let u32_at = |o: usize| body.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+    let mut o = 8;
+    let count = try_read_varint(body, &mut o)? as usize;
+    if count == 0 || count > 100 {
+        return None;
+    }
+    let mut offers = Vec::with_capacity(count);
+    for _ in 0..count {
+        let offer = u32_at(o)?;
+        let quest = u32_at(o + 4)?;
+        let number = u32_at(o + 8)?;
+        let state = *body.get(o + 16)?;
+        let rewards = *body.get(o + 17)? as usize;
+        o += 18;
+        for _ in 0..rewards {
+            o += 4;
+            try_read_varint(body, &mut o)?;
+            o += 9;
+        }
+        offers.push(DutyOffer { offer, quest, number, state });
+    }
+    let reset = i64::from_le_bytes(body.get(o..o + 8)?.try_into().ok()?);
+    // A reset a year either side of 2026 at most: anything else wasn't a board.
+    (body.len() == o + 17 && (1_750_000_000_000..1_850_000_000_000).contains(&reset)).then_some((offers, reset))
+}
+
+/// One shop limit at `at` (see `StreamProcessor::parse_shop_and_craft_packet`):
+/// `(item id, bought, next reset ms)`.
+fn shop_limit_at(body: &[u8], at: usize) -> Option<(u32, u32, i64)> {
+    let b = body.get(at..at + 16)?;
+    let id = u32::from_le_bytes(b[0..4].try_into().ok()?);
+    let bought = u32::from_le_bytes(b[4..8].try_into().ok()?);
+    let reset = i64::from_le_bytes(b[8..16].try_into().ok()?);
+    // Never resetting is year 2100 (item 1254); anything else wasn't one.
+    (1_750_000_000_000..=4_200_000_000_000).contains(&reset).then_some((id, bought, reset))
+}
+
+/// The shop's limits in an `8e 56`: the whole record must read as them.
+fn shop_limits(body: &[u8]) -> Option<Vec<(u32, u32, i64)>> {
+    let count = *body.get(2)? as usize;
+    if count == 0 || body[..2] != [0, 0] || body.len() != 3 + 16 * count {
+        return None;
+    }
+    (0..count).map(|k| shop_limit_at(body, 3 + 16 * k)).collect()
+}
+
+/// Whether `(recipe, crafted)` reads as a craft count: recipe ids seen run
+/// from 31036002 to 72046054, counts are a week's (16 at most).
+fn plausible_craft((recipe, crafted): (u32, u32)) -> bool {
+    (1..=99_999_999).contains(&recipe) && crafted <= 10_000
+}
+
+/// The crafting window's recipes in an `8f 8d`: `(recipe, crafted)`, the
+/// whole record read as sections of them, none empty, each count plausible
+/// (`plausible_craft`): a whole list replaces every count.
+fn craft_list(body: &[u8]) -> Option<Vec<(u32, u32)>> {
+    if body.get(..4)? != [0, 0, 0, 0] {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut o = 4;
+    while o < body.len() {
+        let count = body[o] as usize;
+        if count == 0 {
+            return None;
+        }
+        o += 1;
+        for _ in 0..count {
+            let entry = body.get(o..o + 8)?;
+            let craft = (u32::from_le_bytes(entry[..4].try_into().ok()?), u32::from_le_bytes(entry[4..].try_into().ok()?));
+            if !plausible_craft(craft) {
+                return None;
+            }
+            out.push(craft);
+            o += 8;
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// A craft done in an `8b 8d`: `(recipe, crafted)`, the server's count or
+/// the character's (one of them is 0).
+fn craft_done(body: &[u8]) -> Option<(u32, u32)> {
+    let u32_at = |o: usize| body.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+    if body.len() != 41 || body[..3] != [0, 0, 1] || u32_at(3)? != u32_at(9)? {
+        return None;
+    }
+    Some((u32_at(3)?, u32_at(33)?.saturating_add(u32_at(37)?))).filter(|&c| plausible_craft(c))
+}
+
 fn try_read_varint(bytes: &[u8], offset: &mut usize) -> Option<i32> {
     let result = read_varint(bytes, *offset);
     if result.length <= 0 {
@@ -2386,13 +2641,6 @@ fn decode_spec_flags(raw: i32) -> [bool; 5] {
     result
 }
 
-fn should_treat_first_value_as_damage(first_value: i32, second_value: i32, and_result: i32, damage_type: i32) -> bool {
-    if !(1_000..=99_999_999).contains(&first_value) { return false; }
-    if !(0..=25).contains(&second_value) { return false; }
-    if first_value > 5_000_000 { return false; }
-    and_result == 6 && damage_type == 3
-}
-
 /// The tail of a damage record after its value, when it has the shape the
 /// game's own record confirms: `(end offset, layout-4 field, additional hits,
 /// their damage)`. `None` when the bytes do not end cleanly at the next record.
@@ -2430,11 +2678,41 @@ fn parse_hit_tail_as(packet: &[u8], mut offset: usize, layout: i32, switch_value
             return None;
         }
     }
+    // A hit into a shield: the effects that absorbed part of it, a count and
+    // that many u32 ids. The value before them is what got through (#94).
+    if switch_value & 0x40 != 0 {
+        let absorbed = try_read_varint(packet, &mut offset)?;
+        if !(1..=8).contains(&absorbed) {
+            return None;
+        }
+        offset = offset.checked_add(4 * absorbed as usize)?;
+        if offset > packet.len() {
+            return None;
+        }
+    }
     let rest = &packet[offset.min(packet.len())..];
     let clean_end = rest.is_empty()
         || (rest.len() >= 2 && rest[1] == 0x00 && (1..=7).contains(&rest[0]))
         || rest.starts_with(&[0x04, 0x38]);
     clean_end.then_some((offset, field, count, damage as i32))
+}
+
+/// The damage plotter after a record's hit type: the flags byte, the HP a
+/// Regeneration hit restored, and the angle byte (absent at the very end).
+struct Plotter {
+    flags: u8,
+    // Only its length is used for now; the value is checked by the tests.
+    #[cfg_attr(not(test), allow(dead_code))]
+    hp: i32,
+    hp_len: usize,
+    angle: Option<u8>,
+}
+
+fn read_plotter(packet: &[u8], offset: usize) -> Option<Plotter> {
+    let flags = *packet.get(offset)?;
+    let mut at = offset + 1;
+    let hp = try_read_varint(packet, &mut at)?;
+    Some(Plotter { flags, hp, hp_len: at - offset - 1, angle: packet.get(at).copied() })
 }
 
 fn should_use_repeated_hit_damage(switch_value: i32, encoded_damage: i32, multi_hit_count: i32, first_multi_hit_value: Option<i32>, all_match: bool) -> bool {
@@ -2454,13 +2732,10 @@ fn should_use_repeated_hit_damage(switch_value: i32, encoded_damage: i32, multi_
 /// header does not look like a roster (the opcode is scanned for in raw byte
 /// streams, so the header checks double as the false-positive filter).
 /// See `StreamProcessor::scan_party_roster` for the layout.
-#[allow(clippy::type_complexity)]
-fn parse_party_roster_at(
-    data: &[u8],
-    at: usize,
-) -> Option<(Vec<(String, crate::combat::data_storage::PartyMember)>, bool, i32)> {
+fn parse_party_roster_at(data: &[u8], at: usize) -> Option<Roster> {
     use crate::combat::data_storage::PartyMember;
 
+    let party_key = parse_u32_le(data.get(at..at + 4)?, 0);
     let mut o = at.checked_add(4)?; // party_key u32
     let name_len = *data.get(o)? as usize;
     o += 1;
@@ -2486,9 +2761,11 @@ fn parse_party_roster_at(
     }
     o += count_info.length as usize;
 
+    let count = count_info.value;
     let mut members = Vec::new();
+    let mut name_fields = Vec::new();
     let mut complete = false;
-    for index in 0..count_info.value {
+    for _ in 0..count {
         if o + 20 > data.len() {
             break;
         }
@@ -2499,19 +2776,34 @@ fn parse_party_roster_at(
         let server_id = (dbid >> 48) as u16;
         let nick_len = *data.get(o)? as usize;
         o += 1;
-        // An empty name is a vacant slot. Those records are short and the ones
-        // after them are all vacant too, so the roster ends here.
+        // An empty name is a vacant slot. Vacant slots can sit between members
+        // (slots 1 and 5 filled, 2-4 empty), so look past them for a later one;
+        // when there is none, the roster ends here.
         if nick_len == 0 {
-            complete = true;
-            break;
+            match find_later_member(data, o, slot, count) {
+                Some(next) => {
+                    o = next;
+                    continue;
+                }
+                None => {
+                    complete = true;
+                    break;
+                }
+            }
         }
         if nick_len > 40 || o + nick_len > data.len() {
             break;
         }
-        let nickname = match std::str::from_utf8(&data[o..o + nick_len]) {
-            Ok(s) => s.to_string(),
+        // Letters and digits only, as every other name the parser keeps:
+        // the roster's field was taken as it came (security audit M8).
+        let nickname: String = match std::str::from_utf8(&data[o..o + nick_len]) {
+            Ok(s) => s.chars().filter(|c| c.is_alphanumeric()).collect(),
             Err(_) => break,
         };
+        if nickname.is_empty() {
+            break;
+        }
+        let name_field = o..o + nick_len;
         o += nick_len;
         if o + 12 > data.len() {
             break;
@@ -2535,7 +2827,26 @@ fn parse_party_roster_at(
         // on the member's world id instead: it is repeated here as a u16 and we
         // already know its value from the top half of `dbid`. Combat power then
         // sits a fixed distance past it.
-        let Some(anchor) = find_u16(data, o, o + 10, server_id) else {
+        // A member on another world than their own has that world here
+        // instead, a byte further on: Aylinn, of 2308, as `07 fe 08` (2302)
+        // where the others had `00 09` (2026-10-17). Not finding it lost her
+        // and every member after her. Any world then, with a combat power
+        // where it would be, and the tag byte before it: always 1-4 (71 448
+        // members of one player's saved rosters, 2026-10-23). Without the tag,
+        // a world whose low byte is small read one byte early, the byte before
+        // it as its low byte: Ardilcan of Beritra on such a world showed
+        // 23 371 012 (his 91 293, shifted a byte, and the tag 4). Read there, the
+        // tag is the second u16's high byte, `10` or the world's own.
+        let Some(anchor) = find_u16(data, o, o + 10, server_id).or_else(|| {
+            (o..o + 10).find(|&i| {
+                let world = data.get(i..i + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+                let tag = data.get(i + 4);
+                let power = data.get(i + 5..i + 13).map(|b| u64::from_le_bytes(b.try_into().unwrap()));
+                world.is_some_and(|w| (1000..=2999).contains(&w))
+                    && tag.is_some_and(|t| (1..=4).contains(t))
+                    && power.is_some_and(|p| (1..=100_000_000).contains(&p))
+            })
+        }) else {
             break;
         };
         o = anchor + 2 + 2 + 1; // world id, a second u16, one tag byte
@@ -2545,6 +2856,7 @@ fn parse_party_roster_at(
             break;
         }
 
+        name_fields.push(name_field);
         members.push((
             nickname,
             PartyMember {
@@ -2558,14 +2870,17 @@ fn parse_party_roster_at(
             },
         ));
 
-        if index + 1 == count_info.value {
+        if i32::from(slot) >= count {
             complete = true;
             break;
         }
         // The record tail is likewise variable, so re-acquire the next member by
         // its header: the following slot number, a world id in the top of its
-        // dbid, and a decodable name right behind it.
-        match find_next_member(data, o, slot.wrapping_add(1)) {
+        // dbid, and a decodable name right behind it. The next slot may be
+        // vacant instead; the walk then reads it as one.
+        match find_next_member(data, o, slot.wrapping_add(1))
+            .or_else(|| find_vacant_slot(data, o, slot.wrapping_add(1)))
+        {
             Some(next) => o = next,
             None => break,
         }
@@ -2573,7 +2888,7 @@ fn parse_party_roster_at(
     if members.is_empty() {
         return None;
     }
-    Some((members, complete, dungeon_id))
+    Some(Roster { party_key, members, complete, dungeon_id, name_fields })
 }
 
 /// Find a little-endian `u16` equal to `wanted` in `data[from..to]`.
@@ -2586,7 +2901,26 @@ fn find_u16(data: &[u8], from: usize, to: usize, wanted: u16) -> Option<usize> {
 /// `<mask u8> <slot u8> <dbid u64> <name_len u8> <utf8 name>`, where the slot is
 /// known and the top `u16` of the dbid is a plausible world id.
 fn find_next_member(data: &[u8], from: usize, expected_slot: u8) -> Option<usize> {
-    let end = (from + 32).min(data.len().saturating_sub(12));
+    find_member_within(data, from, 32, expected_slot)
+}
+
+/// A named member in a slot after `slot`, past the vacant records between.
+/// A vacant record is about 35-37 bytes, of varying width like a member's.
+fn find_later_member(data: &[u8], from: usize, slot: u8, count: i32) -> Option<usize> {
+    let last = u8::try_from(count).ok()?;
+    (slot.checked_add(1)?..=last)
+        .find_map(|next| find_member_within(data, from, 48 * usize::from(next - slot), next))
+}
+
+/// A vacant record for `expected_slot` near `from`: a zero mask, the slot, a
+/// zero dbid and an empty name.
+fn find_vacant_slot(data: &[u8], from: usize, expected_slot: u8) -> Option<usize> {
+    let end = (from + 32).min(data.len().saturating_sub(11));
+    (from..=end).find(|&i| data[i] == 0 && data[i + 1] == expected_slot && data[i + 2..i + 11].iter().all(|&b| b == 0))
+}
+
+fn find_member_within(data: &[u8], from: usize, span: usize, expected_slot: u8) -> Option<usize> {
+    let end = (from + span).min(data.len().saturating_sub(12));
     for i in from..=end {
         if data[i + 1] != expected_slot {
             continue;
@@ -2755,6 +3089,18 @@ enum UnicodeScript {
     Other,
 }
 
+/// Your server (u16) and class (u32, the roster's encoding), which follow the
+/// name in a self record. The server must read as one; the class need not,
+/// as Amber1's record on Nezekan (2026-10-01) has other bytes there.
+fn self_profile(data: &[u8], after: usize) -> Option<(u16, Option<JobClass>)> {
+    let rest = data.get(after..after + 2)?;
+    let server = u16::from_le_bytes([rest[0], rest[1]]);
+    let job = data
+        .get(after + 2..after + 6)
+        .and_then(|b| JobClass::from_roster_class(u32::from_le_bytes([b[0], b[1], b[2], b[3]])));
+    (1000..3000).contains(&server).then_some((server, job))
+}
+
 fn unicode_script(ch: char) -> UnicodeScript {
     let cp = ch as u32;
     if (0x4E00..=0x9FFF).contains(&cp) || (0x3400..=0x4DBF).contains(&cp) || (0x20000..=0x2A6DF).contains(&cp) {
@@ -2766,9 +3112,1011 @@ fn unicode_script(ch: char) -> UnicodeScript {
     }
 }
 
+// ===== WHERE RECORDS HOLD NAMES =====
+//
+// The parser's name readers, as functions of the bytes alone: what each reads
+// and where in the packet the name sits. The parser reads names through them,
+// and the Evidence Slice blinds names where they say a name is (`name_fields`),
+// so the two can never disagree about where a name is.
+
+/// The `04 8D` record at the front of a packet, as
+/// `StreamProcessor::parse_summon_ownership_packet` reads it: the summon, its
+/// owner, and the owner's name field (start, length) if one follows.
+fn ownership_at_front(packet: &[u8]) -> Option<(i32, i32, Option<(usize, usize)>)> {
+    let length_info = read_varint(packet, 0);
+    if length_info.length < 0 {
+        return None;
+    }
+    let offset = length_info.length as usize;
+    if offset + 1 >= packet.len() {
+        return None;
+    }
+    if packet[offset] != 0x04 || packet[offset + 1] != 0x8D {
+        return None;
+    }
+
+    let mut pos = offset + 2;
+    let summon_info = read_varint(packet, pos);
+    if summon_info.length <= 0 || summon_info.value < 100 {
+        return None;
+    }
+    let summon_id = summon_info.value;
+    pos += summon_info.length as usize;
+
+    // Skip 4-byte fixed field
+    if pos + 4 > packet.len() {
+        return None;
+    }
+    pos += 4;
+
+    let owner_info = read_varint(packet, pos);
+    if owner_info.length <= 0 || owner_info.value < 100 {
+        return None;
+    }
+    let owner_id = owner_info.value;
+    pos += owner_info.length as usize;
+
+    if owner_id == summon_id {
+        return None;
+    }
+
+    // Name field after owner ID
+    let mut name = None;
+    let meta_info = read_varint(packet, pos);
+    if meta_info.length > 0 {
+        pos += meta_info.length as usize;
+        if pos < packet.len() {
+            let name_len = packet[pos] as usize;
+            if (1..=36).contains(&name_len) && pos + 1 + name_len <= packet.len() {
+                name = Some((pos + 1, name_len));
+            }
+        }
+    }
+    Some((summon_id, owner_id, name))
+}
+
+/// A `04 8D` ownership or loot record found anywhere in `data`.
+struct Ownership {
+    summon_id: i32,
+    owner_id: i32,
+    server_id: u16,
+    name: String,
+    field: std::ops::Range<usize>,
+}
+
+/// Every `04 8D` record in `data` that names its owner, as
+/// `StreamProcessor::scan_for_embedded_04_8d` reads them.
+fn ownership_records(data: &[u8]) -> Vec<Ownership> {
+    let mut out = Vec::new();
+    let mut search_offset = 0;
+    let pattern: [u8; 2] = [0x04, 0x8D];
+
+    while search_offset + 1 < data.len() {
+        let idx = find_pattern(data, search_offset, &pattern);
+        if idx.is_none() {
+            break;
+        }
+        let idx = idx.unwrap();
+
+        search_offset = idx + 2;
+        if search_offset >= data.len() {
+            break;
+        }
+
+        let summon_info = read_varint(data, search_offset);
+        if summon_info.length <= 0 || !(100..=9_999_999).contains(&summon_info.value) {
+            continue;
+        }
+        let summon_id = summon_info.value;
+
+        let fixed_field_start = search_offset + summon_info.length as usize;
+        if fixed_field_start + 4 > data.len() {
+            continue;
+        }
+
+        // The owner follows: `<owner varint> <server id u16 LE> <len><name>`.
+        // The server id was once matched as the literal bytes `E0 07` /
+        // `E2 07` (servers 2016 and 2018), which skipped every other server:
+        // a Sorcerer on Ventus (1305, bytes `19 05`) never got a name. Any id
+        // in the servers' 1000–2999 range is accepted now, and a candidate
+        // only counts when the owner id sits wholly after the fixed field and
+        // the whole name field is a name.
+        let after_fixed = fixed_field_start + 4;
+        // A zero there is no owner: the record a summon gets as it
+        // despawns, all zeros. The scan below then ran on into whatever
+        // followed, and found an "owner" in the next damage records: a
+        // Cleric's Divine Aura went to entity 10210, named "M", and showed
+        // as its own row (2026-10-04, Divine Auldor).
+        if data.get(after_fixed).is_none_or(|&b| b == 0) {
+            continue;
+        }
+        let scan_end = std::cmp::min(data.len().saturating_sub(2), after_fixed + 128);
+        let mut found = None;
+        for server_idx in after_fixed + 1..scan_end {
+            let server_id = u16::from_le_bytes([data[server_idx], data[server_idx + 1]]);
+            if !(1000..=2999).contains(&server_id) {
+                continue;
+            }
+            // The owner `ed 74` (14957) ends in a byte that alone reads as
+            // an id too (`74`, 116); see `varint_ending_at`.
+            let owner_id = varint_ending_at(data, server_idx, after_fixed, 100..=99_999);
+            let Some(owner_id) = owner_id.filter(|&id| id != summon_id) else {
+                continue;
+            };
+            let name_len_idx = server_idx + 2;
+            let name_len = data[name_len_idx] as usize;
+            let name_end = name_len_idx + 1 + name_len;
+            if !NAME_FIELD_BYTES.contains(&name_len) || name_end > data.len() {
+                continue;
+            }
+            if let Some(name) = exact_name(&data[name_len_idx + 1..name_end]) {
+                found = Some(Ownership { summon_id, owner_id, server_id, name, field: name_len_idx + 1..name_end });
+                break;
+            }
+        }
+        let Some(record) = found else {
+            continue;
+        };
+        search_offset = record.field.end;
+        out.push(record);
+    }
+    out
+}
+
+/// Every spawn opcode (40/41/44/45 36) in `data` that
+/// `StreamProcessor::scan_for_embedded_40_36` reads: (where, the opcode's
+/// first byte, entity id).
+/// The NPC code a `40/41 36` spawn names, and where its `00 (40|00) 02`
+/// anchor sits: the three bytes before that anchor, within 60 bytes of
+/// `start_offset` (just past the entity id).
+fn spawn_mob_code(packet: &[u8], start_offset: usize) -> Option<(i32, usize)> {
+    let max_scan = std::cmp::min(packet.len().saturating_sub(2), start_offset + 60);
+    let mut scan_offset = start_offset;
+    while scan_offset < max_scan {
+        if packet[scan_offset] == 0x00
+            && (packet[scan_offset + 1] == 0x40 || packet[scan_offset + 1] == 0x00)
+            && packet[scan_offset + 2] == 0x02
+        {
+            if scan_offset < start_offset + 3 {
+                return None;
+            }
+            let code = packet[scan_offset - 3] as i32 | (packet[scan_offset - 2] as i32) << 8 | (packet[scan_offset - 1] as i32) << 16;
+            return Some((code, scan_offset));
+        }
+        scan_offset += 1;
+    }
+    None
+}
+
+fn embedded_spawns(data: &[u8]) -> Vec<(usize, u8, i32)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 5 < data.len() {
+        // Spawn family shifted +1 in June 2026: mob/summon 0x40->0x41,
+        // player 0x44->0x45. Accept both old and new leading bytes.
+        if data[i + 1] == 0x36 && matches!(data[i], 0x40 | 0x41 | 0x44 | 0x45) {
+            if i > 0 && data[i - 1] == 0x00 {
+                i += 2;
+                continue;
+            }
+            let target_info = read_varint(data, i + 2);
+            if target_info.length > 0 && (100..=9_999_999).contains(&target_info.value) {
+                out.push((i, data[i], target_info.value));
+            }
+            i += 2 + target_info.length.max(0) as usize;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Where a spawn's mask sits relative to `offset` (just past its entity id),
+/// in the u16 and u32 formats: the subtree byte that gates the inline name.
+const MASK_U16_SUBTREE: usize = 2;
+const MASK_U32_SUBTREE: usize = 4;
+
+/// The inline name of a `40/41 36` spawn (its owner's or caster's), and the
+/// name field's bytes. `offset` is just past the entity id.
+///
+/// The mask width changed from u16 to u32, which moves the subtree byte that
+/// gates the inline name. Nothing else in this record is sensitive to it, so
+/// rather than version-sniffing the stream, both positions are tried, the
+/// current format first so a live stream never depends on the fallback.
+///
+/// Getting this wrong is not cosmetic. For a summon the inline name is the
+/// *owner's* character name, and it is the fallback that attributes a pet's
+/// damage to its player when no parent_key is present. A silently
+/// mispositioned gate shows up as summons drifting back into their own rows.
+fn spawn_name_at(packet: &[u8], offset: usize) -> Option<(String, std::ops::Range<usize>)> {
+    let read_name_at = |sub_offset: usize| -> Option<(String, std::ops::Range<usize>)> {
+        let gate = *packet.get(offset + sub_offset)?;
+        if gate & 0x01 == 0 {
+            return None;
+        }
+        let cursor = offset + sub_offset + 1;
+        let name_len = *packet.get(cursor)? as usize;
+        if !NAME_FIELD_BYTES.contains(&name_len) || cursor + 1 + name_len > packet.len() {
+            return None;
+        }
+        // The whole field must be a name. This check is what makes trying
+        // two positions safe: a wrong guess almost never decodes cleanly.
+        let name = exact_name(&packet[cursor + 1..cursor + 1 + name_len])?;
+        Some((name, cursor + 1..cursor + 1 + name_len))
+    };
+    read_name_at(MASK_U32_SUBTREE).or_else(|| read_name_at(MASK_U16_SUBTREE))
+}
+
+/// A self record (`33 36`) or another player's record (`44 36`, `45 36`), as
+/// `StreamProcessor::scan_masked_identity` reads it.
+struct MaskedRecord {
+    id: i32,
+    /// The name field's bytes.
+    field: std::ops::Range<usize>,
+    /// `None` for a tutorial character's placeholder in your self record.
+    name: Option<String>,
+    /// Your server and class, in a self record.
+    profile: Option<(u16, Option<JobClass>)>,
+}
+
+/// Every masked identity record in `data`:
+/// `<opcode 2B> <entity_id varint> <mask1 u32 LE> <mask2 u8> [mask2 & 0x01] <len u8><utf8 name>`.
+/// Your combat power, from the self record's end: two u64 (the first is the
+/// character sheet's: 109,396 for Nullception on 2026-10-16, and 27,564 for
+/// Nully) right before a count of 5 and the entries keyed 01 to 05 (a u16
+/// each). What comes before them varies (a legion name, buffs), so they are
+/// found by what follows. The second u64 is a little higher, or the same.
+fn self_combat_power(rest: &[u8]) -> Option<i64> {
+    let u64_at = |at: usize| rest.get(at..at + 8).map(|b| u64::from_le_bytes(b.try_into().unwrap()));
+    (0..rest.len().saturating_sub(32)).find_map(|p| {
+        let tail = &rest[p + 16..p + 32];
+        if tail[0] != 5 || (0..5).any(|k| tail[1 + 3 * k] != k as u8 + 1) {
+            return None;
+        }
+        let (cp, other) = (u64_at(p)?, u64_at(p + 8)?);
+        ((1..100_000_000).contains(&cp) && (1..100_000_000).contains(&other)).then_some(cp as i64)
+    })
+}
+
+fn masked_records(data: &[u8]) -> Vec<MaskedRecord> {
+    let mut out = Vec::new();
+    if data.len() < 9 {
+        return out;
+    }
+    let mut i = 0;
+    while i + 8 < data.len() {
+        if data[i + 1] != 0x36 {
+            i += 1;
+            continue;
+        }
+        // 0x33 = self, 0x45/0x44 = another player (pre/post the June 2026 shift).
+        let is_self = data[i] == 0x33;
+        if !is_self && data[i] != 0x45 && data[i] != 0x44 {
+            i += 1;
+            continue;
+        }
+        let id = read_varint(data, i + 2);
+        if id.length <= 0 || !(1..=9_999_999).contains(&id.value) {
+            i += 1;
+            continue;
+        }
+        // mask1 is 4 bytes; mask2 is the byte after it and gates the name.
+        let mask2_idx = i + 2 + id.length as usize + 4;
+        if mask2_idx + 1 >= data.len() || data[mask2_idx] & 0x01 == 0 {
+            i += 1;
+            continue;
+        }
+        let name_len = data[mask2_idx + 1] as usize;
+        if !NAME_FIELD_BYTES.contains(&name_len) || mask2_idx + 2 + name_len > data.len() {
+            i += 1;
+            continue;
+        }
+        let field = mask2_idx + 2..mask2_idx + 2 + name_len;
+        let Ok(raw) = std::str::from_utf8(&data[field.clone()]) else {
+            i += 1;
+            continue;
+        };
+        // A new character plays the tutorial before it has a name; until
+        // then the game calls it `$` plus random letters and digits (seen:
+        // `$Kc03nyeQHr4`, entity 3877, on 2026-10-01). It is still you, so
+        // bind the entity, but with no name: a placeholder would be noise,
+        // and keeping the previous character's name would be wrong.
+        if is_self && is_placeholder_name(raw) {
+            i = field.end;
+            out.push(MaskedRecord { id: id.value, field, name: None, profile: None });
+            continue;
+        }
+        // The whole field must be one clean name; otherwise we landed
+        // mid-record rather than on a real name string.
+        let Some(sanitized) = exact_name(&data[field.clone()]) else {
+            i += 1;
+            continue;
+        };
+        // A self record without your server and class after the name is
+        // not one. The last `33 36` of a `1d 37` record ending `33 36 33 36`
+        // read with the next record's bytes as entity 16 and a two-letter
+        // name (2026-10-05 17:42:14), and the meter took that for you.
+        // Entity ids under 100 are real players, so the id cannot tell.
+        let profile = if is_self {
+            let Some(profile) = self_profile(data, field.end) else {
+                i += 1;
+                continue;
+            };
+            Some(profile)
+        } else {
+            None
+        };
+        i = field.end;
+        out.push(MaskedRecord { id: id.value, field, name: Some(sanitized), profile });
+    }
+    out
+}
+
+/// A named player spawn's (`44 36`, `45 36`) id, name and name field, as
+/// `StreamProcessor::parse_player_spawn_name` reads them. Uses the same
+/// mask-gated layout as `masked_records`
+/// (`<id varint> <mask1 u32> <mask2 u8> [mask2 & 0x01] <len><utf8>`) rather
+/// than hunting for the literal `0x07` that older builds happened to put in
+/// the `mask2` slot.
+fn player_spawn_at(data: &[u8], offset_after_opcode: usize) -> Option<(i32, String, std::ops::Range<usize>)> {
+    let actor_info = read_varint(data, offset_after_opcode);
+    // Raid/invasion player ids run well past 99,999, so accept the full entity-id
+    // range (matching the embedded-scan gate) or those spawns are silently dropped.
+    if actor_info.length <= 0 || !(1..=9_999_999).contains(&actor_info.value) {
+        return None;
+    }
+    let actor_id = actor_info.value;
+    let mask2_idx = offset_after_opcode + actor_info.length as usize + 4;
+    if mask2_idx + 1 >= data.len() || data[mask2_idx] & 0x01 == 0 {
+        return None;
+    }
+    let name_len = data[mask2_idx + 1] as usize;
+    if !NAME_FIELD_BYTES.contains(&name_len) || mask2_idx + 2 + name_len > data.len() {
+        return None;
+    }
+    let field = mask2_idx + 2..mask2_idx + 2 + name_len;
+    let name = exact_name(&data[field.clone()])?;
+    Some((actor_id, name, field))
+}
+
+/// A party roster as `StreamProcessor::scan_party_roster` reads it.
+struct Roster {
+    party_key: u32,
+    members: Vec<(String, crate::combat::data_storage::PartyMember)>,
+    complete: bool,
+    dungeon_id: i32,
+    /// Each member's name field, in member order.
+    name_fields: Vec<std::ops::Range<usize>>,
+}
+
+/// Every party roster in `data`.
+fn rosters(data: &[u8]) -> Vec<Roster> {
+    let mut out = Vec::new();
+    if data.len() < 32 {
+        return out;
+    }
+    let mut i = 0;
+    while i + 24 < data.len() {
+        if data[i] != 0x02 || data[i + 1] != 0x97 {
+            i += 1;
+            continue;
+        }
+        match parse_party_roster_at(data, i + 2) {
+            Some(roster) => {
+                out.push(roster);
+                i += 2;
+            }
+            None => i += 1,
+        }
+    }
+    out
+}
+
+/// Where `parse_actor_name_binding_rules` reads a name: `07 <len> <name>` up to
+/// 64 bytes after an anchor `36 <actor varint>`. (actor, name start, length)
+fn actor_name_fields(packet: &[u8]) -> Vec<(i32, usize, usize)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    let mut last_anchor: Option<(i32, usize, usize)> = None; // (actor_id, start, end)
+
+    while i < packet.len() {
+        if packet[i] == 0x36 {
+            // Skip spawn opcodes (40/41 36 mob, 44/45 36 player) — the
+            // 0x36 family shifted +1 in June 2026.
+            if i > 0 && matches!(packet[i - 1], 0x40 | 0x41 | 0x44 | 0x45) {
+                i += 1;
+                continue;
+            }
+            if i + 1 >= packet.len() {
+                i += 1;
+                continue;
+            }
+            let actor_info = read_varint(packet, i + 1);
+            last_anchor = if actor_info.length > 0 && actor_info.value >= 100 {
+                Some((actor_info.value, i, i + 1 + actor_info.length as usize))
+            } else {
+                None
+            };
+            i += 1;
+            continue;
+        }
+
+        if packet[i] == 0x07
+            && let Some((name_start, name_length)) = read_utf8_name(packet, i)
+            && let Some((actor_id, _, end_idx)) = last_anchor
+        {
+            let distance = i as isize - end_idx as isize;
+            if (0..=64).contains(&distance) {
+                out.push((actor_id, name_start, name_length));
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+fn read_utf8_name(packet: &[u8], anchor_index: usize) -> Option<(usize, usize)> {
+    let length_index = anchor_index + 1;
+    if length_index >= packet.len() {
+        return None;
+    }
+    let name_length = packet[length_index] as usize;
+    if !(1..=36).contains(&name_length) {
+        return None;
+    }
+    let name_start = length_index + 1;
+    let name_end = name_start + name_length;
+    if name_end > packet.len() {
+        return None;
+    }
+    let name_bytes = &packet[name_start..name_end];
+    let name = std::str::from_utf8(name_bytes).ok()?;
+    let sanitized = sanitize_nickname(name)?;
+    if sanitized.is_empty() {
+        return None;
+    }
+    Some((name_start, name_length))
+}
+
+/// Where `parse_loot_attribution_actor_name` reads a name:
+/// `<actor varint> <F0..FF> <03|A3> <len> <name>`. (actor, name, whole field)
+fn loot_actor_fields(packet: &[u8]) -> Vec<(i32, String, std::ops::Range<usize>)> {
+    let mut out = Vec::new();
+    let mut idx = 0;
+
+    while idx + 2 < packet.len() {
+        let marker = packet[idx] as u32;
+        let marker_next = packet[idx + 1] as u32;
+        let is_marker = (0xF0..=0xFF).contains(&marker) && (marker_next == 0x03 || marker_next == 0xA3);
+
+        if is_marker {
+            // Scan backward for actor ID
+            let mut actor_info: Option<VarIntResult> = None;
+            let min_offset = idx.saturating_sub(8);
+            for actor_offset in min_offset..idx {
+                if !can_read_varint(packet, actor_offset) {
+                    continue;
+                }
+                let candidate = read_varint(packet, actor_offset);
+                if candidate.length <= 0 || actor_offset + candidate.length as usize != idx {
+                    continue;
+                }
+                if !(100..=99999).contains(&candidate.value) {
+                    continue;
+                }
+                actor_info = Some(candidate);
+                break;
+            }
+
+            let actor_info = match actor_info {
+                Some(a) => a,
+                None => { idx += 1; continue; }
+            };
+
+            let length_idx = idx + 2;
+            if length_idx >= packet.len() {
+                idx += 1;
+                continue;
+            }
+            let name_length = packet[length_idx] as usize;
+            if !(1..=36).contains(&name_length) {
+                idx += 1;
+                continue;
+            }
+            let name_start = length_idx + 1;
+            let name_end = name_start + name_length;
+            if name_end > packet.len() {
+                idx += 1;
+                continue;
+            }
+            let name = match std::str::from_utf8(&packet[name_start..name_end]) {
+                Ok(s) => s,
+                Err(_) => { idx = name_end; continue; }
+            };
+            let sanitized = match sanitize_nickname(name) {
+                Some(s) => s,
+                None => { idx = name_end; continue; }
+            };
+            out.push((actor_info.value, sanitized, name_start..name_end));
+            idx = name_end;
+            continue;
+        }
+        idx += 1;
+    }
+    out
+}
+
+/// Where `parsing_nickname` reads a name, by its three patterns. (id, name,
+/// the name's bytes)
+fn nickname_fields(packet: &[u8]) -> Vec<(i32, String, std::ops::Range<usize>)> {
+    let mut out = Vec::new();
+    let mut search_offset = 0;
+
+    while search_offset + 2 < packet.len() {
+        // PATTERN A: E2/E0 07 anchor
+        if (packet[search_offset] == 0xE2 || packet[search_offset] == 0xE0)
+            && packet[search_offset + 1] == 0x07
+        {
+            let len_idx = search_offset + 2;
+            if len_idx < packet.len() {
+                let name_len = packet[len_idx] as usize;
+                if (2..=36).contains(&name_len) && len_idx + 1 + name_len <= packet.len() {
+                    let np = &packet[len_idx + 1..len_idx + 1 + name_len];
+                    if let Ok(possible_name) = std::str::from_utf8(np) {
+                        if !possible_name.is_empty() && possible_name.chars().next().unwrap().is_alphanumeric() {
+                            if let Some((sanitized, range)) = sanitized_at(packet, len_idx + 1, name_len) {
+                                if sanitized.len() >= 2
+                                    && let Some(id) = varint_ending_at(packet, search_offset, 0, 100..=9_999_999)
+                                {
+                                    out.push((id, sanitized, range));
+                                    search_offset = len_idx + 1 + name_len;
+                                    // Skip guild name
+                                    search_offset = skip_guild_name(packet, search_offset);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // PATTERN B: 0F 1D 37 block anchor
+        if search_offset + 2 < packet.len()
+            && packet[search_offset] == 0x0F
+            && packet[search_offset + 1] == 0x1D
+            && packet[search_offset + 2] == 0x37
+        {
+            let id_offset = search_offset + 3;
+            if can_read_varint(packet, id_offset) {
+                let block_actor = read_varint(packet, id_offset);
+                if (100..=9_999_999).contains(&block_actor.value) {
+                    let mut block_scan = id_offset + block_actor.length as usize;
+                    let block_end = std::cmp::min(packet.len(), block_scan + 500);
+
+                    while block_scan + 3 < block_end {
+                        // Stop at terminator. The leading byte changed
+                        // 0x06 -> 0x0E in the June 2026 update; accept both.
+                        if (packet[block_scan] == 0x06 || packet[block_scan] == 0x0E) && packet[block_scan + 1] == 0x00 && packet[block_scan + 2] == 0x36 {
+                            break;
+                        }
+                        // Name must be preceded by 00 00
+                        if packet[block_scan] == 0x00 && packet[block_scan + 1] == 0x00 {
+                            let len_idx = block_scan + 2;
+                            if len_idx < packet.len() {
+                                let name_len = packet[len_idx] as usize;
+                                if (2..=36).contains(&name_len) && len_idx + 1 + name_len <= packet.len() {
+                                    let np = &packet[len_idx + 1..len_idx + 1 + name_len];
+                                    if let Ok(possible_name) = std::str::from_utf8(np) {
+                                        if !possible_name.is_empty() && possible_name.chars().next().unwrap().is_alphanumeric() {
+                                            if let Some((sanitized, range)) = sanitized_at(packet, len_idx + 1, name_len) {
+                                                if sanitized.len() >= 2 {
+                                                    out.push((block_actor.value, sanitized, range));
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        block_scan += 1;
+                    }
+                }
+            }
+        }
+
+        // PATTERN D: Terminator anchor (04/00 4C)
+        if search_offset + 1 < packet.len() {
+            let b0 = packet[search_offset] as u32;
+            let b1 = packet[search_offset + 1] as u32;
+
+            if (b0 == 0x04 || b0 == 0x00) && b1 == 0x4C {
+                let id_idx = search_offset + 2;
+                if can_read_varint(packet, id_idx) {
+                    let player_info = read_varint(packet, id_idx);
+                    if player_info.length > 0 && (100..=9_999_999).contains(&player_info.value) {
+                        let stop_at = std::cmp::min(packet.len().saturating_sub(2), id_idx + 128);
+                        let mut scan_idx = id_idx + player_info.length as usize;
+
+                        while scan_idx < stop_at {
+                            // Terminator: leading byte changed 0x06 -> 0x0E
+                            // in the June 2026 update; accept both.
+                            if (packet[scan_idx] == 0x06 || packet[scan_idx] == 0x0E)
+                                && packet[scan_idx + 1] == 0x00
+                                && packet[scan_idx + 2] == 0x36
+                            {
+                                // Look backwards for name
+                                for test_len in 2..=36usize {
+                                    if scan_idx < test_len + 1 + id_idx {
+                                        continue;
+                                    }
+                                    let len_byte_idx = scan_idx - test_len - 1;
+                                    if len_byte_idx <= id_idx {
+                                        continue;
+                                    }
+                                    let possible_len = packet[len_byte_idx] as usize;
+                                    if possible_len == test_len {
+                                        let np = &packet[len_byte_idx + 1..len_byte_idx + 1 + test_len];
+                                        if let Ok(possible_name) = std::str::from_utf8(np) {
+                                            if !possible_name.is_empty() && possible_name.chars().next().unwrap().is_alphanumeric() {
+                                                if let Some(found) = sanitized_at(packet, len_byte_idx + 1, test_len) {
+                                                    if found.0.len() >= 2 {
+                                                        // Try to find earlier name (player name vs guild)
+                                                        let before_name = find_name_before(
+                                                            packet, len_byte_idx,
+                                                            id_idx + player_info.length as usize,
+                                                        );
+                                                        let (final_name, range) = before_name.unwrap_or(found);
+                                                        out.push((player_info.value, final_name, range));
+                                                        search_offset = scan_idx;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                            scan_idx += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        search_offset += 1;
+    }
+    out
+}
+
+fn find_name_before(packet: &[u8], before_idx: usize, min_idx: usize) -> Option<(String, std::ops::Range<usize>)> {
+    for test_len in 2..=36usize {
+        for gap in 0..=1usize {
+            if before_idx < gap + test_len + 1 {
+                continue;
+            }
+            let name_len_idx = before_idx - gap - test_len - 1;
+            if name_len_idx < min_idx {
+                continue;
+            }
+            let possible_len = packet[name_len_idx] as usize;
+            if possible_len != test_len {
+                continue;
+            }
+            let np = &packet[name_len_idx + 1..name_len_idx + 1 + test_len];
+            if let Ok(possible_name) = std::str::from_utf8(np) {
+                if possible_name.is_empty() || !possible_name.chars().next().unwrap().is_alphanumeric() {
+                    continue;
+                }
+                if let Some(found) = sanitized_at(packet, name_len_idx + 1, test_len) {
+                    if found.0.len() >= 2 {
+                        return Some(found);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn skip_guild_name(packet: &[u8], start_index: usize) -> usize {
+    if start_index >= packet.len() {
+        return start_index;
+    }
+    let mut offset = start_index;
+    if packet[offset] == 0x00 {
+        offset += 1;
+        if offset >= packet.len() {
+            return offset;
+        }
+    }
+    let length = packet[offset] as usize;
+    if !(1..=36).contains(&length) {
+        return offset;
+    }
+    let name_start = offset + 1;
+    let name_end = name_start + length;
+    if name_end > packet.len() {
+        return offset;
+    }
+    if std::str::from_utf8(&packet[name_start..name_end]).is_err() {
+        return offset;
+    }
+    name_end
+}
+
+/// The name `sanitize_nickname` reads from `packet[start..start + len]`, and
+/// where its bytes sit: the field's first run of letters and digits.
+fn sanitized_at(packet: &[u8], start: usize, len: usize) -> Option<(String, std::ops::Range<usize>)> {
+    let field = std::str::from_utf8(packet.get(start..start.checked_add(len)?)?).ok()?;
+    let name = sanitize_nickname(field)?;
+    let head = field.split('\0').next().unwrap_or("");
+    let at = start + head.len() - head.trim_start().len();
+    let end = at + name.len();
+    (packet.get(at..end)? == name.as_bytes()).then_some((name, at..end))
+}
+
+/// A place where a packet holds a character name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NameField {
+    pub range: std::ops::Range<usize>,
+}
+
+/// Where one framed packet holds character names, as a replay reads that
+/// packet: the readers `parse_perfect_packet` runs on it, and the record scans
+/// over it (`scan_records`). Sorted by where they start; two readers that find
+/// the same field give it once. Found whether or not the parser would take the
+/// name (it may already know the entity): a name is a name either way.
+///
+/// The Evidence Slice blinds names here, at any length. That is the only way
+/// to find a one-letter name, which the game allows: searched for, its one
+/// byte turns up all through the packets.
+pub fn name_fields(packet: &[u8]) -> Vec<NameField> {
+    let mut out = Vec::new();
+    let mut push = |range: std::ops::Range<usize>| out.push(NameField { range });
+    // At the front: `parse_summon_ownership_packet` and `parse_summon_packet`.
+    let length = read_varint(packet, 0);
+    if length.length >= 0 {
+        let offset = length.length as usize;
+        if offset + 1 < packet.len() && packet[offset + 1] == 0x36 {
+            if matches!(packet[offset], 0x44 | 0x45) {
+                if let Some((_, _, range)) = player_spawn_at(packet, offset + 2) {
+                    push(range);
+                }
+            } else if matches!(packet[offset], 0x40 | 0x41)
+                && let Some(range) = spawn_owner(packet, offset + 2)
+            {
+                push(range);
+            }
+        }
+    }
+    if let Some((_, _, Some((start, len)))) = ownership_at_front(packet)
+        && let Some((_, range)) = sanitized_at(packet, start, len)
+    {
+        push(range);
+    }
+    for (_, start, len) in actor_name_fields(packet) {
+        if let Some((_, range)) = sanitized_at(packet, start, len) {
+            push(range);
+        }
+    }
+    for (_, _, range) in loot_actor_fields(packet) {
+        if let Some((_, range)) = sanitized_at(packet, range.start, range.len()) {
+            push(range);
+        }
+    }
+    for (_, _, range) in nickname_fields(packet) {
+        push(range);
+    }
+    scanned_name_fields(packet, &mut out);
+    out.sort_by_key(|f| (f.range.start, f.range.end));
+    out.dedup_by(|a, b| a.range == b.range);
+    out
+}
+
+/// The name a `40/41 36` spawn carries, as `parse_summon_spawn_at` reads it.
+fn spawn_owner(packet: &[u8], offset_after_opcode: usize) -> Option<std::ops::Range<usize>> {
+    let id = read_varint(packet, offset_after_opcode);
+    if id.length < 0 {
+        return None;
+    }
+    let offset = offset_after_opcode + id.length as usize;
+    if offset + 2 >= packet.len() {
+        return None;
+    }
+    spawn_name_at(packet, offset).map(|(_, range)| range)
+}
+
+/// The records the scans read anywhere in a packet (see `scan_records`). The
+/// character-select list (`scan_char_list_self`) is left out: it names only
+/// the character the meter was told to look for.
+fn scanned_name_fields(data: &[u8], out: &mut Vec<NameField>) {
+    for record in ownership_records(data) {
+        out.push(NameField { range: record.field });
+    }
+    for (i, opcode, _) in embedded_spawns(data) {
+        if opcode == 0x44 || opcode == 0x45 {
+            if let Some((_, _, range)) = player_spawn_at(data, i + 2) {
+                out.push(NameField { range });
+            }
+        } else if let Some(range) = spawn_owner(data, i + 2) {
+            // Read whether or not the parser already knows the id as a mob.
+            out.push(NameField { range });
+        }
+    }
+    for record in masked_records(data) {
+        if record.name.is_some() {
+            out.push(NameField { range: record.field });
+        }
+    }
+    for roster in rosters(data) {
+        for range in roster.name_fields {
+            out.push(NameField { range });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::data_storage::SkillCombatData;
+    use crate::combat::stagger::{End, Outcome, StaggerWindow};
+
+    /// A roster with slots 1 and 5 filled and 2-4 vacant (bytes from a
+    /// 2026-08-15 capture, rearranged). The walk used to stop at slot 2.
+    #[test]
+    fn roster_reads_members_past_vacant_slots() {
+        let roster = [
+            "02 97 a5 f9 08 00 0b 38 35 30 4b 20 e8 bf 9e e5 88 b7 05 63 28 09 00 00 03 85 4b 01 00 00 00 f6 03 1f 02 00 05",
+            "0c 01 85 4b 01 00 00 00 f6 03 0f e4 b9 9d e5 b7 9e e4 be 9d e7 84 b6 e5 9c a8 06 00 00 00 32 00 00 00 07 17 00 00 f6 03 f6 03 04 38 39 0d 00 00 00 00 00 00 01 01",
+            "00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 00 00 00 00 00",
+            "00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 00 00 00 00 00",
+            "00 04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 00 00 00 00 00",
+            "0e 05 62 64 01 00 00 00 f6 03 02 4d 37 0e 00 00 00 32 00 00 00 5e 16 00 00 f6 03 f6 03 04 6a 03 0d 00 00 00 00 00 00 01 01",
+            "02 0e 00 36",
+        ]
+        .join(" ");
+        let data: Vec<u8> = roster.split_whitespace().map(|b| u8::from_str_radix(b, 16).unwrap()).collect();
+        let Roster { members, complete, .. } = parse_party_roster_at(&data, 2).expect("a roster");
+        let slots: Vec<(String, u8)> = members.iter().map(|(n, m)| (n.clone(), m.slot)).collect();
+        assert_eq!(slots, vec![("九州依然在".to_string(), 1), ("M7".to_string(), 5)]);
+        assert!(complete);
+
+        // Members in slots 1-2 and the rest vacant: complete, as before.
+        let roster = ["02 97 a5 f9 08 00 0b 38 35 30 4b 20 e8 bf 9e e5 88 b7 05 63 28 09 00 00 03 85 4b 01 00 00 00 f6 03 1f 02 00 05", "0c 01 85 4b 01 00 00 00 f6 03 0f e4 b9 9d e5 b7 9e e4 be 9d e7 84 b6 e5 9c a8 06 00 00 00 32 00 00 00 07 17 00 00 f6 03 f6 03 04 38 39 0d 00 00 00 00 00 00 01 01", "0e 02 62 64 01 00 00 00 f6 03 02 4d 37 0e 00 00 00 32 00 00 00 5e 16 00 00 f6 03 f6 03 04 6a 03 0d 00 00 00 00 00 00 01 01", "00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 00 00 00 00 00", "00 04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 00 00 00 00 00", "00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 00 00 00 00 00"].join(" ");
+        let data: Vec<u8> = roster.split_whitespace().map(|b| u8::from_str_radix(b, 16).unwrap()).collect();
+        let Roster { members, complete, .. } = parse_party_roster_at(&data, 2).expect("a roster");
+        assert_eq!(members.len(), 2);
+        assert!(complete, "vacant slots after the last member end the roster");
+    }
+
+    /// A member on another world than their own: Aylinn (slot 4) is of 2308
+    /// but on 2302 (2026-10-17 19:45). The walk stopped at her, losing her
+    /// and RoyBatty, and the meter kept three of five.
+    #[test]
+    fn roster_reads_a_member_on_another_world() {
+        let hex = "029771931a001d416c6c20626f7373657320616c742072756e204c46206368616e74657205cc2709000003f0b3030000000009ff0202051e01f0b303000000000906416c66697261200000002d000000db0500000009cd1004be1201000000000000300000000000000001051e02e9b70200000002090553656c75650c0000002d000000f30600000209cd1004f85201000000000000790000000000000001051e03e212040000000009064e79786572611c0000002d000000cc0500000009cd1004210001000000000000250000000000000001051e04efd10200000004090641796c696e6e1c0000002d0000001d08000007fe08cd1004e85201000000000000750000000000000001051e05b28602000000240508526f794261747479210000002d000000990600002405cd1003234301000000000000b20000000000000001050009";
+        let data: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()).collect();
+        let Roster { members, complete, .. } = parse_party_roster_at(&data, 2).expect("a roster");
+        let got: Vec<(String, i64, u16)> = members.iter().map(|(n, m)| (n.clone(), m.combat_power, m.server_id)).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Alfira".to_string(), 70334, 2304),
+                ("Selue".to_string(), 86776, 2306),
+                ("Nyxera".to_string(), 65569, 2304),
+                ("Aylinn".to_string(), 86760, 2308),
+                ("RoyBatty".to_string(), 82723, 1316),
+            ]
+        );
+        assert!(complete);
+    }
+
+    /// The same member on a world whose low byte is small: Aylinn's record
+    /// with her party on 2313 (`09 09`) instead of 2302. The byte before the
+    /// world (`07`) and its low byte read as world 2311, so the search took the
+    /// spot one byte early and read her combat power shifted by a byte: her
+    /// 86 760 as 22 210 564 (86 760 × 256 + the tag byte). Ardilcan of Beritra
+    /// showed 23 371 012 for his 91 293 this way (2026-10-23).
+    #[test]
+    fn roster_reads_a_visitors_combat_power_on_any_world() {
+        let hex = "029771931a001d416c6c20626f7373657320616c742072756e204c46206368616e74657205cc2709000003f0b3030000000009ff0202051e01f0b303000000000906416c66697261200000002d000000db0500000009cd1004be1201000000000000300000000000000001051e02e9b70200000002090553656c75650c0000002d000000f30600000209cd1004f85201000000000000790000000000000001051e03e212040000000009064e79786572611c0000002d000000cc0500000009cd1004210001000000000000250000000000000001051e04efd10200000004090641796c696e6e1c0000002d0000001d080000070909cd1004e85201000000000000750000000000000001051e05b28602000000240508526f794261747479210000002d000000990600002405cd1003234301000000000000b20000000000000001050009";
+        let data: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()).collect();
+        let Roster { members, .. } = parse_party_roster_at(&data, 2).expect("a roster");
+        let got: Vec<(String, i64)> = members.iter().map(|(n, m)| (n.clone(), m.combat_power)).collect();
+        assert_eq!(got[3], ("Aylinn".to_string(), 86760));
+        assert_eq!(got[4], ("RoyBatty".to_string(), 82723));
+    }
+
+    /// A Spiritmaster's spirits send `04 38` records to their owner on each
+    /// landed attack (2026-10-05 15:37). The Wind Spirit's (16990003) restores
+    /// 1.5 % HP: 103 of 6871. The Water Spirit's (16990002) restores 20 MP
+    /// (SkillEffect MpHeal 20), same layout; the game files it under 100011,
+    /// so it showed as "Fire Spirit: Basic Attack" healing. A self-cast MP
+    /// restore (15760007, 30 MP, 15:17:41) went in as a self-heal.
+    #[test]
+    fn mp_restores_are_not_healing() {
+        let (storage, mut p) = processor();
+        let mut hit = crate::entity::damage_packet::ParsedDamagePacket::new();
+        hit.set_timestamp(1_000);
+        hit.set_target_id(16720);
+        hit.set_actor_id(10137);
+        hit.set_skill_code(16040000);
+        hit.set_type(2);
+        hit.set_damage(500);
+        storage.append_damage(hit.clone());
+        hit.set_actor_id(2787);
+        storage.append_damage(hit);
+        storage.register_confirmed_summon_by_id(61001, 10137);
+        storage.register_confirmed_summon_by_id(49482, 10137);
+
+        assert!(feed(&mut p, "994f0400c9dc03333f03010602f7af446501000000ac52670100"));
+        assert!(feed(&mut p, "994f0400ca8203323f0301060293af446501000000ac52140100"));
+        assert!(feed(&mut p, "e3150400e315877af0005302c7dcef5d01000000865d1e0100"));
+
+        // This meter does not yet record a spirit's HP restore on its owner
+        // (the Wind Spirit's 103), so no heal is left at all: the self-cast
+        // 30 MP is gone, and nothing went in as damage either.
+        let heals = storage.get_heal_snapshot();
+        let healed: Vec<_> = heals.iter().flat_map(|(a, s)| s.iter().map(move |(k, v)| (*a, k.0, v.total_heal))).collect();
+        assert_eq!(healed, vec![]);
+        let snapshot = storage.get_combat_snapshot();
+        assert!(!snapshot.contains_key(&10137) && !snapshot.contains_key(&2787));
+    }
+
+    /// A heal tick from a capture (2026-10-05 17:31:46): target 5041, heal,
+    /// actor 5041, effect 190000131, 7351. The effect is abnormal 19000013,
+    /// Restore HP, which no skill owns: a full heal (5041's max HP was 6683
+    /// and went to full). Its code, 1900001, is no skill but has a name.
+    #[test]
+    fn a_heal_from_no_skill_has_a_name() {
+        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/data");
+        let skills = Arc::new(SkillLookup::new());
+        let npcs = Arc::new(NpcLookup::new());
+        crate::i18n::lookup::load_language(&skills, &npcs, &data, "en");
+        let storage = Arc::new(DataStorage::new());
+        let mut p = StreamProcessor::new(storage.clone(), skills.clone(), npcs);
+        p.set_override_timestamp(Some(1_000));
+        p.parse_dot_packet(&hex("130538b12701b127b601032c530bb739"));
+        let heal = &storage.get_heal_snapshot()[&5041][&(1_900_001, false)];
+        assert_eq!((heal.total_heal, heal.tick_count), (7351, 1));
+        assert_eq!(skills.lookup_skill_name(1_900_001), "Restore HP");
+        for lang in ["de", "es", "fr", "ja", "ko", "pt", "ru"] {
+            let skills = SkillLookup::new();
+            crate::i18n::lookup::load_language(&skills, &NpcLookup::new(), &data, lang);
+            assert!(!skills.lookup_skill_name(1_900_001).is_empty(), "{lang}");
+        }
+    }
+
+    /// A damage tick from a capture (2026-10-05 16:35:12): target 5377 (a
+    /// player), actor 26813 (never seen spawning), effect 120001211, 51. The
+    /// effect is abnormal 12000121, a Burn many monster skills share and no
+    /// skill owns. Its code, 1200012, is no skill but has a name.
+    #[test]
+    fn a_damage_tick_from_no_skill_has_a_name() {
+        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/data");
+        let skills = Arc::new(SkillLookup::new());
+        let npcs = Arc::new(NpcLookup::new());
+        crate::i18n::lookup::load_language(&skills, &npcs, &data, "en");
+        let storage = Arc::new(DataStorage::new());
+        let mut p = StreamProcessor::new(storage.clone(), skills.clone(), npcs);
+        p.set_dot_skill_ids(HashSet::from([1_200_012]));
+        p.set_override_timestamp(Some(1_000));
+        p.parse_dot_packet(&hex("170538812a0abdd1019002bb1227073332931200"));
+        let tick = &storage.get_combat_snapshot()[&5377].actors[&26813].skills[&(1_200_012, true)];
+        assert_eq!((tick.total_damage, tick.hit_count), (51, 1));
+        assert_eq!(skills.lookup_skill_name(1_200_012), "Burn");
+        // Poison, Bleed and Burn, magic, physical and the rest.
+        for code in [1_200_010, 1_200_011, 1_200_014, 1_200_015, 1_200_016, 1_200_018] {
+            assert!(["Poison", "Bleed", "Burn"].contains(&skills.lookup_skill_name(code).as_str()), "{code}");
+        }
+        for lang in ["de", "es", "fr", "ja", "ko", "pt", "ru"] {
+            let skills = SkillLookup::new();
+            crate::i18n::lookup::load_language(&skills, &NpcLookup::new(), &data, lang);
+            assert!(!skills.lookup_skill_name(1_200_015).is_empty(), "{lang}");
+        }
+    }
 
     /// Damage records from a live capture (2026-10-04, target 30001, actor
     /// 1395), each checked against the game's own Damage Analyzer record of
@@ -2802,6 +4150,869 @@ mod tests {
         assert_eq!(parse("b1ea011600f30a40c0f40063028000010b199b5f01000000ac52d007"), (976, 1, 0, 0, 0));
     }
 
+    /// A damage record four bundles deep is read; five deep, it is not, the
+    /// same depth the slice builder stops at.
+    #[test]
+    fn bundles_nest_four_deep_at_most() {
+        let frame = |body: &[u8]| {
+            let mut v = crate::capture::framing::length_value(body.len());
+            let mut out = Vec::new();
+            loop {
+                let b = (v & 0x7F) as u8;
+                v >>= 7;
+                if v == 0 {
+                    out.push(b);
+                    break;
+                }
+                out.push(b | 0x80);
+            }
+            out.extend_from_slice(body);
+            out
+        };
+        let bundle = |inner: &[u8]| {
+            let mut body = vec![0xFF, 0xFF];
+            body.extend_from_slice(&(inner.len() as u32).to_le_bytes());
+            body.extend_from_slice(&lz4_flex::compress(inner));
+            frame(&body)
+        };
+        let record = [&[0x04, 0x38][..], &hex("b1ea011600f30a40c0f40063028000010b199b5f01000000ac52d007")].concat();
+        for (depth, read) in [(1, true), (4, true), (5, false), (40, false)] {
+            let mut stream = frame(&record);
+            for _ in 0..depth {
+                stream = bundle(&stream);
+            }
+            let (storage, mut p) = processor();
+            p.consume_stream(&stream);
+            assert_eq!(!storage.get_combat_snapshot().is_empty(), read, "depth {depth}");
+        }
+    }
+
+    fn hex(s: &str) -> Vec<u8> {
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    }
+
+    /// Hand one `04 38` record (the bytes after the opcode) to the parser.
+    fn feed(p: &mut StreamProcessor, record: &str) -> bool {
+        let mut packet = vec![0x00, 0x04, 0x38];
+        packet.extend(hex(record));
+        packet[0] = packet.len() as u8;
+        p.parsing_damage(&packet, false, false)
+    }
+
+    /// Gatekeeper Pinopi (2026-10-15, entity 47573) hitting a player (9681)
+    /// for 1,258 with a 7-digit NPC skill (1607550). The parser used to drop
+    /// every NPC skill, so Damage Taken stayed 0; the hit now counts, on the
+    /// fight with the monster that dealt it.
+    #[test]
+    fn a_monsters_hit_on_a_player_counts_as_damage_taken() {
+        let (storage, mut p) = processor();
+        storage.append_mob(47573, 2_980_040);
+        // The player hits it first (a player skill), so 9681 is known to be one.
+        let mut first = crate::entity::damage_packet::ParsedDamagePacket::new();
+        first.set_timestamp(500);
+        first.set_actor_id(9681);
+        first.set_target_id(47573);
+        first.set_skill_code(16_190_020);
+        first.set_damage(100);
+        storage.append_damage(first);
+
+        assert!(feed(&mut p, "D14B0600D5F3027E871800020202000243ED940901000000904EEA090100"));
+        let taken = storage.get_combat_snapshot_light()[&47573].actors[&9681].damage_received;
+        assert_eq!(taken, 1_258);
+        // Nothing of it is taken for the monster's own damage.
+        assert!(!storage.get_combat_snapshot_light()[&47573].actors.contains_key(&47573));
+    }
+
+    /// Ritualist Garshim (2100077) spawned, inside a bundle of other records,
+    /// as entity 29091, which an ordinary mob (2920174) had had before. The
+    /// embedded-spawn scan passed over ids already known as mobs, so the meter
+    /// kept the old code and never showed his fight (2026-10-27).
+    #[test]
+    fn a_spawn_reusing_a_mobs_id_names_the_new_npc() {
+        let (storage, mut p) = processor();
+        storage.append_mob(29091, 2_920_174);
+        // His spawn as the bundle carried it, after another record's bytes.
+        let data = hex("111D37860C2F03E5D502ED90F3910A4736FC2E01000A473690750100BF014136A3E3010420006D0B20000002C5ACD1C6D4E19B460064904649E7034273170180D0A54C80D0A54C640000006400000200025F");
+        p.scan_for_embedded_40_36(&data);
+        assert_eq!(storage.mob_code(29091), Some(2_100_077));
+        // The same spawn read again (its own frame, then the scan) changes nothing.
+        p.scan_for_embedded_40_36(&data);
+        assert_eq!(storage.mob_code(29091), Some(2_100_077));
+    }
+
+    /// A Training Scarecrow's live HP (2026-10-07, entity 25839, whose spawn
+    /// came before the meter started): hit down to 1, it stops there and
+    /// comes back to full. That is how the meter knows it is a dummy without
+    /// the NPC code.
+    #[test]
+    fn a_dummy_whose_spawn_was_missed_is_known_by_its_hp() {
+        let (storage, mut p) = processor();
+        let hp = |p: &mut StreamProcessor, hp: &str| {
+            p.consume_stream(&hex(&format!("1400 8DEFC901 020100 {hp} 00000000").replace(' ', "")))
+        };
+        for reading in ["55E50000", "DF120000"] {
+            assert_eq!(hp(&mut p, reading), 17);
+        }
+        assert_eq!(storage.get_mob_current_hp(25839), Some(0x12DF));
+        assert!(!storage.is_hp_reset_dummy(25839), "hit, not yet at the floor");
+        hp(&mut p, "01000000");
+        assert!(!storage.is_hp_reset_dummy(25839), "at the floor: a mob about to die looks the same");
+        hp(&mut p, "8F380100");
+        assert!(storage.is_hp_reset_dummy(25839), "back up from 1 without dying");
+    }
+
+    /// A world boss has more HP than the 100 million bound against misparses
+    /// (Watcher Kaira and Argo: 810 million). Its live HP is read up to the
+    /// max HP its spawn gave; without a spawn, the bound stays (#70).
+    #[test]
+    fn a_world_bosss_hp_over_100_million_is_read_up_to_its_spawn_max() {
+        let (storage, mut p) = processor();
+        let hp = |p: &mut StreamProcessor, hp: &str| {
+            p.consume_stream(&hex(&format!("1400 8DEFC901 020100 {hp} 00000000").replace(' ', "")))
+        };
+        // 800,000,000 with no spawn known: refused.
+        hp(&mut p, "0008AF2F");
+        assert_eq!(storage.get_mob_current_hp(25839), None);
+        storage.append_mob_hp(25839, 810_000_000);
+        hp(&mut p, "0008AF2F");
+        assert_eq!(storage.get_mob_current_hp(25839), Some(800_000_000));
+        hp(&mut p, "00E1F505"); // 100,000,000
+        // Over the spawn's max: a misread, refused.
+        assert_eq!(storage.get_mob_current_hp(25839), Some(100_000_000));
+        hp(&mut p, "00E9A435"); // 900,000,000, over the spawn's 810 million
+        assert_eq!(storage.get_mob_current_hp(25839), Some(100_000_000));
+    }
+
+    /// Hits into a shield (Global EU, 2026-10-06, effect 122307011 `c3 41 4a
+    /// 07`; from #94): switch bit 0x40 puts the absorbing effects after the
+    /// value, a count and that many u32 ids. Read as extra hits they added the
+    /// shield's id, 8,387, to each: 581 counted as 8,968, 317 as 8,704.
+    #[test]
+    fn a_hit_into_a_shield_is_its_value() {
+        for (record, value) in [
+            ("F3B7024600A17B680BC8001502000002D545244E02000000F462C50401C3414A070200", 581),
+            ("F3B7024400A17B181DD2001A026B5D135201000000F462BD0201C3414A070100", 317),
+        ] {
+            let (storage, mut p) = processor();
+            assert!(feed(&mut p, record));
+            let total: i64 = storage.get_combat_snapshot().values()
+                .flat_map(|t| t.actors.values()).map(|a| a.total_damage).sum();
+            assert_eq!(total, value, "{record}");
+        }
+    }
+
+    /// A DoT tick into the same shield: effect type 0x0E (0x0A with 0x04),
+    /// the absorbing effects after the amount. It was dropped; it is 77.
+    #[test]
+    fn a_dot_tick_into_a_shield_counts() {
+        let (storage, mut p) = processor();
+        p.set_dot_skill_ids(HashSet::from([13_730_007]));
+        p.parse_dot_packet(&hex("1B0538F3B7020EA17B020854D6514D01C3414A07D780D100"));
+        let total: i64 = storage.get_combat_snapshot().values()
+            .flat_map(|t| t.actors.values()).map(|a| a.total_damage).sum();
+        assert_eq!(total, 77);
+    }
+
+    /// A Wind Spirit's Malicious Whirlwind ticks on after the spirit is
+    /// unsummoned (2026-10-06 21:16, spirit 25676 of player 15740 on target
+    /// 48776). The game's Damage Analyzer counted the two ticks before the
+    /// spirit's `42 36` flag 7 and neither after it; so does the meter.
+    #[test]
+    fn a_spirit_s_ticks_stop_counting_when_it_leaves() {
+        let (storage, mut p) = processor();
+        p.set_dot_skill_ids(HashSet::from([16_001_109]));
+        let tick = hex("19053888fd020accc801881241c15f5ff7025828f400");
+        // The owner's link record to the spirit (16770001).
+        let link = "ccc8010400fc7ad1e3ff000102affdf46301000000e65bf4010100";
+        feed(&mut p, link);
+        assert_eq!(storage.get_summon_data().get(&25676), Some(&15740));
+        p.parse_dot_packet(&tick);
+        p.parse_dot_packet(&tick);
+        p.parse_death_packet(&hex("0b4236ccc8010007"));
+        p.parse_dot_packet(&tick);
+        p.parse_dot_packet(&tick);
+        let ticks = &storage.get_combat_snapshot()[&48776].actors[&25676].skills[&(16_001_109, true)];
+        assert_eq!((ticks.hit_count, ticks.total_damage), (2, 750));
+
+        // A spirit back under the same id (its link records resume) counts again.
+        feed(&mut p, link);
+        p.parse_dot_packet(&tick);
+        let ticks = &storage.get_combat_snapshot()[&48776].actors[&25676].skills[&(16_001_109, true)];
+        assert_eq!(ticks.hit_count, 3);
+    }
+
+    /// From a meter opened mid-session at the training dummies (2026-10-07,
+    /// EU): a hit by the local player, entity 2737 (`b1 15`), on dummy 25839,
+    /// and one of the `06 38` records the server sends about them several
+    /// times a second. No self record came for 18 minutes.
+    #[test]
+    fn a_meter_opened_mid_session_finds_you_in_party_scope_records() {
+        let (storage, mut p) = processor();
+        let scope = hex("0e0638b115171dd200f700");
+        let mut stream = hex("240438efc9010600b115c859d100fc0300000001c711c75101000000904eca050100");
+        for _ in 0..23 {
+            stream.extend(&scope);
+        }
+        assert_eq!(p.consume_stream(&stream), stream.len());
+        assert_eq!(storage.local_player_id(), None);
+        p.consume_stream(&scope);
+        assert_eq!(storage.local_player_id(), Some(2737));
+        assert!(storage.local_id_from_scope());
+    }
+
+    /// Odyle energy (2026-10-14): the login list at 21:16:50 (30 basic, 840
+    /// charged, as the game's tooltip said), then a recharge item's update at
+    /// 21:24:45 (charged 880). A `0c 61` without the energy entry changes
+    /// nothing.
+    #[test]
+    fn odyle_energy_from_the_login_list_and_its_updates() {
+        let (storage, mut p) = processor();
+        assert_eq!(storage.odyle_energy(), None);
+        let list = [
+            "f1030b61490c010000000a010103000000a0c01b01000000000004000000000600000004070000002004080000000501",
+            "090000008085800100000000040a0000000e040b00000002040c0000000e010d0000008085800100000000040e000000",
+            "0e040f0000000e04650000000e04660000000704670000000701c9000000808580010000000001ca0000008085800100",
+            "00000001cb000000808580010000000001cc000000808580010000000001cd000000808580010000000001ce00000080",
+            "858001000000000081969800008296980000839698000084969800008596980000869698000087969800008896980000",
+            "89969800008a969800008b969800008c9698000c018793031ec80604028793030e04038793030e04048793030e040587",
+            "93030e04068793031504078793032304088793031c040987930309040a8793030704658793030e04c987930307044d8b",
+            "93030704b18b93030e04358f93030704998f93030e041d9393030704819393030e04059793030704699793030704b59b",
+            "930304049d9f93030404bda29303070421a393030e048daa93030704f1aa93030e0445b693030704a9b6930307042dba",
+            "9303070415be93030704fdc193030704811d2c04030401b4c4040304814a5d050404824a5d050104834a5d050404844a",
+            "5d050204854a5d050404864a5d0502",
+        ]
+        .concat();
+        p.parse_perfect_packet(&hex(&list));
+        assert_eq!(storage.odyle_energy(), Some((30, 840)));
+
+        p.parse_perfect_packet(&hex("140c61010c018793031ef0060128000000"));
+        assert_eq!(storage.odyle_energy(), Some((30, 880)));
+
+        // The `0c 61` that followed the list at 03:18:42.
+        p.parse_perfect_packet(&hex("0d0c6100000987930303"));
+        assert_eq!(storage.odyle_energy(), Some((30, 880)));
+    }
+
+    /// The Daily Duty board at a transfer (2026-10-24 17:34:16, the game
+    /// said 3/5), then an offer taken and given up (Weaken Blades Defenses,
+    /// 17:31:28 and 17:31:31, replayed on the board).
+    #[test]
+    fn daily_duty_from_the_board_and_its_changes() {
+        let (storage, mut p) = processor();
+        p.set_override_timestamp(Some(1_792_900_000_000));
+        let board = [
+            "870b1c8d00000000000000000f1f0000003a2023000000000000000000010537337037f4030000e1f505000000006526",
+            "b41fc8010080f0fa020000000037337037e80700408af701000000002133703780fa010040787d01000000006826b41f",
+            "c80100809698000000000020000000a52023000000000000000000010537337037ac020000e1f5050000000037337037",
+            "f4030080f0fa020000000021337037b0ea0100408af701000000006426b41fc8010040787d0100000000c2ee65240100",
+            "809698000000000021000000c420230000000000000000000105e4f59306010000e1f5050000000037337037e8070080",
+            "f0fa020000000043da051e0100408af7010000000037337037f4030040787d010000000021337037a08d060080969800",
+            "00000000220000003b2023000000000000000000010521337037d00f0000e1f505000000006626b41fc8010080f0fa02",
+            "0000000023c59a250100408af7010000000037337037f4030040787d01000000000189890c0100809698000000000023",
+            "000000b52023000000000000000000010537337037640000e1f505000000006726b41fc8010080f0fa02000000003733",
+            "7037e80700408af70100000000bdee6524010040787d01000000006426b41fc80100809698000000000024000000d820",
+            "23000000000000000000010537337037ac020000e1f505000000006426b41fc8010080f0fa020000000023c59a250100",
+            "408af701000000006726b41fc8010040787d010000000037337037b81700809698000000000025000000bf2023000701",
+            "000000000000020543da051e010000e1f505000000006526b41fc8010080f0fa020000000040da051e0100408af70100",
+            "00000037337037f4030040787d01000000002133703780f10400809698000000000026000000a7202300090100000000",
+            "0000020541da051e010000e1f5050000000040da051e010080f0fa020000000040da051e0100408af701000000006626",
+            "b41fc8010040787d010000000040da051e0100809698000000000027000000c320230000000000000000000105213370",
+            "37a01f0000e1f5050000000037337037f4030080f0fa020000000041da051e0100408af701000000006626b41fc80100",
+            "40787d010000000021337037e0d40300809698000000000028000000b12023000000000000000000010521337037d00f",
+            "0000e1f5050000000037337037e8070080f0fa020000000021337037a09c0100408af701000000006526b41fc8010040",
+            "787d010000000021337037e0d40300809698000000000029000000dc2023000000000000000000010537337037900300",
+            "00e1f5050000000037337037f4030080f0fa020000000037337037f40300408af701000000006426b41fc8010040787d",
+            "01000000006426b41fc8010080969800000000002a000000a9202300080100000000000002056426b41fc8010000e1f5",
+            "050000000042da051e010080f0fa0200000000bcee65240100408af7010000000037337037d00f0040787d0100000000",
+            "37337037a01f0080969800000000002b000000d720230000000000000000000105dc156624010000e1f5050000000037",
+            "337037f4030080f0fa020000000037337037dc0b00408af7010000000021337037d089020040787d0100000000373370",
+            "37a01f0080969800000000002c000000d12023000000000000000000010521337037a01f0000e1f50500000000373370",
+            "37e8070080f0fa02000000006826b41fc80100408af7010000000023c59a25010040787d010000000037337037882700",
+            "80969800000000002d000000ad20230000000000000000000105c4899806010000e1f5050000000037337037e8070080",
+            "f0fa020000000085ca8f0c0100408af7010000000021337037b0ea010040787d01000000003733703788270080969800",
+            "0000000080e9db71a10100000080e9db71a1010000",
+        ]
+        .concat();
+        let (offers, reset) = daily_duty_board(&hex(&board)[4..]).unwrap();
+        assert_eq!(offers.len(), 15);
+        assert_eq!(reset, 1_792_911_600_000);
+        let taken: Vec<_> = offers.iter().filter(|o| o.state == 2).map(|o| (o.offer, o.quest, o.number)).collect();
+        assert_eq!(taken, vec![(37, 2_302_143, 263), (38, 2_302_119, 265), (42, 2_302_121, 264)]);
+        p.parse_perfect_packet(&hex(&board));
+        // Before the board's reset (2026-10-25 07:00 UTC), and after it.
+        let duty = |s: &DataStorage| s.daily_duty_at(1_792_900_000_000).map(|(_, taken)| taken);
+        // Three taken, none completed.
+        assert_eq!(storage.daily_duty_at(1_792_900_000_000), Some((0, 3)));
+        assert_eq!(storage.daily_duty_at(1_792_911_600_000), Some((0, 0)));
+        p.parse_perfect_packet(&hex("15208d0100002d000000ad2023000a010000"));
+        assert_eq!(duty(&storage), Some(4));
+        p.parse_perfect_packet(&hex("0c0d8d00000a010000"));
+        assert_eq!(duty(&storage), Some(3));
+        // Another quest given up (not the board's) changes nothing.
+        p.parse_perfect_packet(&hex("0c0d8d0000ff010000"));
+        assert_eq!(duty(&storage), Some(3));
+        // A quest taken that isn't one of the board's offers doesn't count,
+        // even one like them: the board names all of the day's.
+        p.parse_perfect_packet(&hex("15208d01000060000000b02023000b010000"));
+        p.parse_perfect_packet(&hex("15208d0100002d00000041420f000b010000"));
+        assert_eq!(duty(&storage), Some(3));
+
+        // The board the turn-in sent: one completed of five taken.
+        let after = [
+            "d90e1c8d02000000010000001425000000bf2023000701000000000000020543da051e010000e1f505000000006526b4",
+            "1fc8010080f0fa020000000040da051e0100408af7010000000037337037f4030040787d01000000002133703780f104",
+            "00809698000000000026000000a72023000901000000000000020541da051e010000e1f5050000000040da051e010080",
+            "f0fa020000000040da051e0100408af701000000006626b41fc8010040787d010000000040da051e0100809698000000",
+            "00002a000000a9202300080100000000000002056426b41fc8010000e1f5050000000042da051e010080f0fa02000000",
+            "00bcee65240100408af7010000000037337037d00f0040787d010000000037337037a01f008096980000000000310000",
+            "00ae202300000000000000000001056426b41fc8010000e1f505000000006426b41fc8010080f0fa02000000006426b4",
+            "1fc80100408af701000000006826b41fc8010040787d01000000002133703780f10400809698000000000035000000af",
+            "2023000b01000000000000020540da051e010000e1f5050000000037337037e8070080f0fa02000000006726b41fc801",
+            "00408af7010000000037337037e8070040787d01000000006426b41fc8010080969800000000003d0000003a20230000",
+            "0000000000000001053733703790030000e1f50500000000f33c6624010080f0fa020000000037337037f40300408af7",
+            "010000000005b0890c010040787d01000000002133703780f1040080969800000000003e000000482023000000000000",
+            "000000010521337037a01f0000e1f505000000006626b41fc8010080f0fa02000000006426b41fc80100408af7010000",
+            "000037337037f4030040787d01000000006526b41fc8010080969800000000003f000000b02023000000000000000000",
+            "010526e48c0c010000e1f5050000000021337037b06d0080f0fa02000000006826b41fc80100408af701000000006826",
+            "b41fc8010040787d010000000037337037a01f00809698000000000040000000d6202300000000000000000001056626",
+            "b41fc8010000e1f5050000000021337037d08c010080f0fa020000000037337037f40300408af7010000000021337037",
+            "80fa010040787d01000000002133703780f10400809698000000000041000000ca2023000c01000000000000040544da",
+            "051e010000e1f50500000000c4899806010080f0fa02000000002133703790cb0100408af701000000006726b41fc801",
+            "0040787d010000000021337037a08d06008096980000000000420000009e2023000000000000000000010537337037f4",
+            "030000e1f505000000006426b41fc8010080f0fa020000000021337037e0da0100408af7010000000023c59a25010040",
+            "787d0100000000c07b860c0100809698000000000043000000cb2023000000000000000000010521337037d00f0000e1",
+            "f505000000006d526524010080f0fa020000000040da051e0100408af7010000000037337037dc0b0040787d01000000",
+            "0037337037a01f00809698000000000044000000ce2023000000000000000000010521337037904e0000e1f505000000",
+            "0021337037807d0080f0fa020000000021337037f0ab0100408af7010000000037337037e8070040787d0100000000a2",
+            "0f8b0c0100809698000000000045000000c52023000000000000000000010521337037904e0000e1f505000000003733",
+            "7037e8070080f0fa02000000006426b41fc80100408af701000000006626b41fc8010040787d01000000006626b41fc8",
+            "0100809698000000000046000000b2202300000000000000000001053733703790030000e1f505000000006426b41fc8",
+            "010080f0fa020000000037337037e80700408af701000000006626b41fc8010040787d01000000006426b41fc8010080",
+            "9698000000000047000000c82023000000000000000000010521337037f02e0000e1f5050000000037337037f4030080",
+            "f0fa02000000006526b41fc80100408af70100000000c1ee6524010040787d01000000006626b41fc801008096980000",
+            "00000048000000a82023000000000000000000010521337037d00f0000e1f5050000000037337037f4030080f0fa0200",
+            "0000006726b41fc80100408af701000000006426b41fc8010040787d010000000080a38f0c0100809698000000000049",
+            "000000bd2023000000000000000000010537337037c8010000e1f5050000000005b0890c010080f0fa020000000040da",
+            "051e0100408af7010000000037337037d00f0040787d010000000021337037e0d4030080969800000000004a000000d2",
+            "2023000000000000000000010540da051e010000e1f5050000000037337037f4030080f0fa020000000021337037b0ea",
+            "0100408af7010000000040da051e010040787d010000000021337037e0d4030080969800000000004b000000d3202300",
+            "00000000000000000105f33c6624010000e1f5050000000021337037e05d0080f0fa02000000006826b41fc80100408a",
+            "f7010000000021337037b0ea010040787d010000000021337037a08d0600809698000000000080e9db71a10100000080",
+            "e9db71a1010000",
+        ]
+        .concat();
+        p.parse_perfect_packet(&hex(&after));
+        assert_eq!(storage.daily_duty_at(1_792_900_000_000), Some((1, 5)));
+
+        // Played through the reset (2026-10-25 07:00 UTC): the day starts
+        // with none, and an offer taken counts until the next board.
+        let next_day = 1_792_911_600_000 + 60_000;
+        assert_eq!(storage.daily_duty_at(next_day), Some((0, 0)));
+        p.set_override_timestamp(Some(next_day));
+        p.parse_perfect_packet(&hex("15208d0100002d000000ad2023000a010000"));
+        assert_eq!(storage.daily_duty_at(next_day), Some((0, 1)));
+        p.parse_perfect_packet(&hex("0c0d8d00000a010000"));
+        assert_eq!(storage.daily_duty_at(next_day), Some((0, 0)));
+        // Until the new board comes: a quest unlike the board's doesn't
+        // count, a second like them does.
+        p.parse_perfect_packet(&hex("15208d0100002d000000ad2023000a010000"));
+        p.parse_perfect_packet(&hex("15208d0100006100000041420f000c010000"));
+        assert_eq!(storage.daily_duty_at(next_day), Some((0, 1)));
+        p.parse_perfect_packet(&hex("15208d01000060000000b02023000b010000"));
+        assert_eq!(storage.daily_duty_at(next_day), Some((0, 2)));
+        // 2301990 is in the board's hex block (`23 20 xx`) but not its
+        // thousand: not counted.
+        p.parse_perfect_packet(&hex("15208d01000062000000262023000d010000"));
+        assert_eq!(storage.daily_duty_at(next_day), Some((0, 2)));
+        // Records that only start the same, without the `00 00`: nothing.
+        p.parse_perfect_packet(&hex("15208d01ffff63000000b12023000e010000"));
+        p.parse_perfect_packet(&hex("0c0d8dffff0b010000"));
+        assert_eq!(storage.daily_duty_at(next_day), Some((0, 2)));
+
+        // Another character's login (its list): that board isn't theirs.
+        storage.set_content_counts(vec![(1, [12, 9])], true);
+        assert_eq!(storage.daily_duty_at(1_792_900_000_000), None);
+    }
+
+    /// The shop's limits and the crafts (2026-10-25, Nulli): the shop opened
+    /// (12:12:29, Buy Odyle Energy 100134 at 20, Buy Rift Stones 100135 at 1
+    /// after one bought at 12:04:05), the crafting window (12:12:04, the
+    /// server's Odyle Energy craft 32070001 at 3) and a craft of the
+    /// character's, 32070002, 0 to 1 (12:12:36).
+    #[test]
+    fn shop_limits_and_crafts() {
+        let (storage, mut p) = processor();
+        let shop = [
+            "798e56000007910400000000000080fd4e81a1010000e6040000000000008075d52abb030000ee04000000000000806d",
+            "e895a1010000048701001e00000000ec8581a1010000268701001400000000ec8581a1010000278701000100000080fd",
+            "4e81a10100002d8701000000000080fd4e81a1010000",
+        ]
+        .concat();
+        p.parse_perfect_packet(&hex(&shop));
+        let now = 1_792_930_000_000;
+        let limits = storage.shop_limits_at(now);
+        assert_eq!(limits.len(), 7);
+        assert_eq!(limits[&100_134], (20, Some(1_793_174_400_000)));
+        assert_eq!(limits[&100_135], (1, Some(1_793_170_800_000)));
+        // Past its reset (Wednesday 07:00 UTC), nothing bought yet.
+        assert_eq!(storage.shop_limits_at(1_793_170_800_000)[&100_135], (0, None));
+        // One bought: the entry alone, then a list of one.
+        p.parse_perfect_packet(&hex("168f56278701000200000080fd4e81a1010000"));
+        assert_eq!(storage.shop_limits_at(now)[&100_135].0, 2);
+        p.parse_perfect_packet(&hex("198e56000001278701000100000080fd4e81a1010000"));
+        assert_eq!(storage.shop_limits_at(now)[&100_135].0, 1);
+
+        let window = [
+            "dc068f8d00000000103117da01000000003317da01000000003417da0100000000e4cada01000000007159e901030000",
+            "007359e901000000007459e90100000000240dea010000000081133c0400000000c1554b0400000000e0554b04000000",
+            "00e1554b0400000000e2554b0400000000e4554b0401000000e5554b0401000000e6554b04010000005a6292d9010000",
+            "00001cc9d901000000001dc9d901000000001ec9d901000000001fc9d9010000000020c9d9010000000021c9d9010000",
+            "00003217da0100000000b155da0100000000b455da010000000039e6da01000000003ae6da01000000003ce6da010000",
+            "000021eada010000000022eada010000000023eada010000000025eada010000000009eeda01000000000aeeda010000",
+            "00000beeda01000000000deeda0100000000f1f1da0100000000a2d4e801000000005c0be901000000005d0be9010000",
+            "00005e0be901000000005f0be90100000000600be90100000000610be901000000007259e90100000000f197e9010000",
+            "0000f497e901000000007928ea01000000007a28ea01000000007c28ea0100000000612cea0100000000622cea010000",
+            "0000632cea0100000000652cea01000000004930ea01000000004a30ea01000000004b30ea01000000004d30ea010000",
+            "00003134ea010000000009cf7102000000000acf710200000000f1d2710200000000f2d271020000000019f671020000",
+            "000001fa71020000000049118102010000004a1181020000000031158102010000003215810200000000593881020000",
+            "0000413c810201000000596d0a030000000099af190301000000f1ffa20300000000f2ffa203000000003142b2030000",
+            "00003242b2030000000071133c040000000072133c040000000073133c040000000076133c040000000077133c040000",
+            "000078133c04000000007a133c04000000007b133c04000000007c133c04000000007d133c04000000007e133c040000",
+            "00007f133c040000000080133c040000000082133c0400000000b1554b0400000000b2554b0400000000b3554b040000",
+            "0000b6554b0400000000b7554b0400000000b8554b0400000000ba554b0400000000bb554b0400000000bc554b040000",
+            "0000bd554b0400000000be554b0400000000bf554b0400000000c0554b0400000000c2554b0400000000",
+        ]
+        .concat();
+        p.parse_perfect_packet(&hex(&window));
+        let crafts = storage.craft_counts();
+        assert_eq!(crafts.len(), 106);
+        assert_eq!(crafts[&32_070_001], 3);
+        assert_eq!(crafts[&32_070_002], 0);
+        // The window's other record (`8f 8d 00 00 01 00 00 00`) is no list.
+        p.parse_perfect_packet(&hex("0c8f8d000001000000"));
+        assert_eq!(storage.craft_counts().len(), 106);
+        p.parse_perfect_packet(&hex("2f8b8d0000017259e90150057259e90101000000010000000000000000000000000000000000000001000000"));
+        assert_eq!(storage.craft_counts()[&32_070_002], 1);
+        p.parse_perfect_packet(&hex("2f8b8d0000017159e90150057159e90101000000010000000000000000000000000000000300000000000000"));
+        assert_eq!(storage.craft_counts()[&32_070_001], 3);
+        // Both counts garbage: no overflow, and not taken.
+        p.parse_perfect_packet(&hex("2f8b8d0000017159e90150057159e9010100000001000000000000000000000000000000ffffffffffffffff"));
+        assert_eq!(storage.craft_counts()[&32_070_001], 3);
+        // Records that would read as a list but for an empty section or an
+        // implausible count replace nothing.
+        p.parse_perfect_packet(&hex("148f8d00000000017159e9010300000000"));
+        p.parse_perfect_packet(&hex("138f8d00000000017159e90100000100"));
+        assert_eq!(storage.craft_counts().len(), 106);
+
+        // The shop's whole list replaces the limits: an item gone from it
+        // goes. A list of one (a purchase) is merged.
+        p.parse_perfect_packet(&hex("298e56000002268701001400000000ec8581a1010000278701000100000080fd4e81a1010000"));
+        assert_eq!(storage.shop_limits_at(now).keys().copied().collect::<Vec<_>>(), vec![100_134, 100_135]);
+        p.parse_perfect_packet(&hex("198e560000012d8701000000000080fd4e81a1010000"));
+        assert_eq!(storage.shop_limits_at(now).len(), 3);
+
+        // The character event reads them with the owner, at one moment.
+        let list = storage.entry_list();
+        assert_eq!(list.crafts, storage.craft_counts());
+        assert_eq!(list.shop_limits.len(), 3);
+
+        // Another character's login: neither is theirs.
+        storage.set_content_counts(vec![(1, [12, 9])], true);
+        assert!(storage.shop_limits_at(now).is_empty());
+        assert!(storage.craft_counts().is_empty());
+        let list = storage.entry_list();
+        assert!(list.shop_limits.is_empty() && list.crafts.is_empty());
+    }
+
+    /// Kinah gained today at a login, then a pickup; the week's Abyss Points
+    /// and limit (2026-10-25, Nullception). A login's wait for the self
+    /// record; a reset since gives 0.
+    #[test]
+    fn kinah_today_and_abyss_points() {
+        let (storage, mut p) = processor();
+        // 2026-10-25 12:00 UTC, a Sunday.
+        let now = 1_792_929_600_000;
+        p.set_override_timestamp(Some(now));
+        storage.set_local_identity_from_game(1030, Some("Main".into()));
+        storage.set_kinah_today(400, now, false);
+        storage.set_abyss_points(7, 2_000_000, now);
+        storage.set_local_identity_from_game(1030, Some("Main".into()));
+        // Alt's login: its Abyss Points before the list, its Kinah after.
+        p.parse_perfect_packet(&hex("13a9ffe3c500000000000080841e0000000000"));
+        p.parse_perfect_packet(&hex("13a5ff00000000000000000983c072a1010000"));
+        assert_eq!(storage.kinah_today_at(now), Some(400), "Main's until the self record");
+        assert_eq!(storage.abyss_points_at(now), Some((7, 2_000_000)));
+        storage.set_local_identity_from_game(4294, Some("Alt".into()));
+        assert_eq!(storage.kinah_today_at(now), Some(0));
+        assert_eq!(storage.abyss_points_at(now), Some((50_659, 2_000_000)));
+        p.parse_perfect_packet(&hex("13a6fffe050000000000006b32e172a1010000"));
+        assert_eq!(storage.kinah_today_at(now), Some(1534));
+        // Points over the limit aren't the points; nor Kinah past the daily
+        // cap or with a time that isn't one.
+        p.parse_perfect_packet(&hex("13a9ff05000000000000000100000000000000"));
+        p.parse_perfect_packet(&hex("13a6ff41420f00000000006b32e172a1010000"));
+        p.parse_perfect_packet(&hex("13a6ff06060000000000000500000000000000"));
+        storage.set_local_identity_from_game(4294, Some("Alt".into()));
+        assert_eq!(storage.kinah_today_at(now), Some(1534));
+        assert_eq!(storage.abyss_points_at(now), Some((50_659, 2_000_000)));
+        // The daily reset (2026-10-26 07:00 UTC) and the weekly (Wednesday
+        // 2026-10-28 07:00 UTC).
+        let monday = 1_792_998_000_000;
+        assert_eq!(storage.kinah_today_at(monday - 1), Some(1534));
+        assert_eq!(storage.kinah_today_at(monday), Some(0));
+        assert_eq!(storage.abyss_points_at(monday), Some((50_659, 2_000_000)));
+        let wednesday = monday + 2 * 24 * 60 * 60 * 1000;
+        assert_eq!(storage.abyss_points_at(wednesday - 1), Some((50_659, 2_000_000)));
+        assert_eq!(storage.abyss_points_at(wednesday), Some((0, 2_000_000)));
+
+        // A login whose list brings no Kinah or Abyss Points: the last
+        // character's go with the list.
+        storage.set_content_counts(vec![(1, [12, 9])], true);
+        storage.set_local_identity_from_game(5100, Some("Third".into()));
+        assert_eq!(storage.kinah_today_at(now), None);
+        assert_eq!(storage.abyss_points_at(now), None);
+        // A pickup between the list and the self record is newer than the
+        // login's Kinah held for it.
+        storage.set_content_counts(vec![(1, [12, 9])], true);
+        p.parse_perfect_packet(&hex("13a5ff00000000000000000983c072a1010000"));
+        p.parse_perfect_packet(&hex("13a6fffe050000000000006b32e172a1010000"));
+        storage.set_local_identity_from_game(4294, Some("Alt".into()));
+        assert_eq!(storage.kinah_today_at(now), Some(1534));
+        let list = storage.entry_list();
+        assert_eq!((list.owner.as_deref(), list.kinah_today), (Some("Alt"), Some(1534)));
+    }
+
+    /// The login list after the game's 2026-10-29 change: id 3 comes as two
+    /// u64 (kind `03`), which the reader refused, dropping the whole list
+    /// (Nullception's login, 23:20 CET).
+    #[test]
+    fn the_login_list_with_a_two_u64_entry_reads() {
+        let (storage, mut p) = processor();
+        p.parse_perfect_packet(&hex("fc030b61490c01000000150c0303000000c0ab6a010000000080ee3600000000000c04000000060a000600000004070000002004080000000601090000008085800100000000040a0000000e040b00000002040c0000000e010d0000008085800100000000040e0000000e040f0000000e08650000000504660000000704670000000701c9000000808580010000000001ca000000808580010000000001cb000000808580010000000001cc000000808580010000000001cd000000808580010000000001ce0000008085800100000000008196980000829698000083969800008496980000859698000086969800008796980000889698000089969800008a969800008b969800008c9698000c0187930378ea0804028793030e04038793030e04048793030e04058793030e04068793031504078793032304088793031c04098793030a040a8793030704658793030e04c987930307044d8b93030704b18b93030e04358f93030704998f93030e041d9393030704819393030e04059793030704699793030704b59b930304049d9f93030404bda29303070421a393030e048daa93030704f1aa93030e0445b693030704a9b6930307042dba9303070415be93030704fdc193030704811d2c04030c01b4c404020104814a5d050404824a5d050104834a5d050404844a5d050204854a5d050404864a5d0502"));
+        let counts = storage.content_counts();
+        assert_eq!(counts.get(&1), Some(&[21, 12]));
+        assert_eq!(counts.get(&4), Some(&[6, 10]));
+        assert_eq!(counts.get(&80_000_001), Some(&[2, 1]));
+        assert_eq!(counts.get(&3), None);
+        assert_eq!(storage.odyle_energy(), Some((120, 1130)));
+    }
+
+    /// The whole entry-count list, by id, and its updates (Nullception's
+    /// login, 2026-10-22 00:59:21; updates from 2026-10-17 and -19).
+    #[test]
+    fn content_counts_from_the_login_list_and_its_updates() {
+        let (storage, mut p) = processor();
+        let list = "fa030b61490c0100000006090103000000f89b7901000000000004000000000600000004070000002004080000000701090000008085800100000000040a0000000e040b00000002040c0000000e010d0000008085800100000000040e0000000e040f0000000e04650000000e04660000000704670000000701c9000000808580010000000001ca000000808580010000000001cb000000808580010000000001cc000000808580010000000001cd000000808580010000000001ce00000080858001000000000181969800d0fb01000000000000829698000083969800008496980000859698000086969800008796980000889698000089969800008a969800008b969800008c9698000c018793039601ff0b04028793030e04038793030e04048793030e04058793030e04068793031504078793032304088793031c04098793030a040a8793030704658793030e04c987930307044d8b93030704b18b93030e04358f93030704998f93030e041d9393030704819393030e04059793030704699793030704b59b930304049d9f93030404bda29303070421a393030e048daa93030704f1aa93030e0445b693030704a9b6930307042dba9303070415be93030704fdc193030704811d2c04030401b4c4040304814a5d050404824a5d050104834a5d050404844a5d050204854a5d050404864a5d0502";
+        p.parse_perfect_packet(&hex(list));
+        let counts = storage.content_counts();
+        assert_eq!(counts.get(&1), Some(&[6, 9]));
+        assert_eq!(counts.get(&60_000_001), Some(&[150, 1535]));
+        assert_eq!(counts.get(&4), Some(&[0, 0]));
+        assert_eq!(counts.get(&70_000_001), Some(&[3, 0]));
+        assert_eq!(counts.get(&90_000_006), Some(&[2, 0]));
+        // u64 entries (times) are not counts.
+        assert_eq!(counts.get(&3), None);
+        assert_eq!(storage.odyle_energy(), Some((150, 1535)));
+
+        p.parse_perfect_packet(&hex("0f0c61000c010000000b0103"));
+        assert_eq!(storage.content_counts().get(&1), Some(&[11, 1]));
+        p.parse_perfect_packet(&hex("0e0c6100040c0000000e02"));
+        assert_eq!(storage.content_counts().get(&12), Some(&[14, 0]));
+        // An update with Odyle energy only: the rest are kept.
+        p.parse_perfect_packet(&hex("140c61010c018793031ef0060128000000"));
+        assert_eq!(storage.content_counts().get(&60_000_001), Some(&[30, 880]));
+        assert_eq!(storage.content_counts().get(&1), Some(&[11, 1]));
+
+        // The Abyss passages (2026-10-25, Nullception): one entered with its
+        // 2:10, used up 130 s later; a count again then.
+        p.set_override_timestamp(Some(1_792_930_000_000));
+        p.parse_perfect_packet(&hex("120c61000182969800d0fb01000000000003"));
+        assert_eq!(storage.content_times().get(&10_000_002), Some(&(130_000, 1_792_930_000_000)));
+        // Sent again unchanged: still seen at the first time.
+        p.set_override_timestamp(Some(1_792_930_005_000));
+        p.parse_perfect_packet(&hex("120c61000182969800d0fb01000000000003"));
+        assert_eq!(storage.content_times().get(&10_000_002), Some(&(130_000, 1_792_930_000_000)));
+        // The counts and times are read together.
+        let list = storage.entry_list();
+        assert_eq!(list.times.get(&10_000_002), Some(&(130_000, 1_792_930_000_000)));
+        assert_eq!(list.counts.get(&10_000_002), None);
+        p.parse_perfect_packet(&hex("0d0c6100008296980003"));
+        assert_eq!(storage.content_times().get(&10_000_002), None);
+        assert_eq!(storage.content_counts().get(&10_000_002), Some(&[0, 0]));
+        p.set_override_timestamp(None);
+        // A login's list that doesn't read: the counts before it aren't the
+        // new character's, so they go, and the owner waits for the self record.
+        storage.set_local_identity_from_game(1030, Some("Nullception".into()));
+        p.parse_perfect_packet(&hex("0a0b61ffeeddccbb"));
+        assert!(storage.content_counts().is_empty());
+        assert_eq!(storage.odyle_owner(), None);
+        // Its energy goes with them: the next self record must not take the
+        // last character's 30/880 as its own.
+        assert_eq!(storage.odyle_energy(), None);
+        storage.set_local_identity_from_game(4294, Some("Alt".into()));
+        assert_eq!(storage.odyle_energy(), None);
+        assert_eq!(storage.odyle_owner(), None);
+    }
+
+    /// Updates that don't read whole are turned away: trailing bytes that
+    /// would make up entries, an id of 0, a count past a million.
+    #[test]
+    fn content_count_updates_that_dont_read_whole_change_nothing() {
+        let (storage, mut p) = processor();
+        p.parse_perfect_packet(&hex("0f0c61000c010000000b0103"));
+        assert_eq!(storage.content_counts().get(&1), Some(&[11, 1]));
+        // Two entries claimed, one there.
+        p.parse_perfect_packet(&hex("0f0c61020c010000000c0103"));
+        // One entry, then more than a tail.
+        p.parse_perfect_packet(&hex("150c61000c010000000c0103aabbccddeeff"));
+        // Id 0.
+        p.parse_perfect_packet(&hex("0e0c610004000000000e02"));
+        // A count of 2^28.
+        p.parse_perfect_packet(&hex("120c6100040c00000080808080010203"));
+        let counts = storage.content_counts();
+        assert_eq!(counts.get(&1), Some(&[11, 1]));
+        assert_eq!(counts.len(), 1, "{counts:?}");
+    }
+
+    /// With no charged energy the entry has one value (`04`, the zero
+    /// dropped): the list at a login on 2026-10-16 (its energy entry and the
+    /// one after it, as the game sent them) is 840 basic, 0 charged. The
+    /// meter only read the two-value form and showed nothing.
+    /// A player's log (2026-10-15): basic energy 0, so the login list and
+    /// the updates carry charged energy alone (`08`), and many updates start
+    /// `00`. The meter read none of them and only refreshed when a two-value
+    /// entry came.
+    #[test]
+    fn odyle_energy_with_charged_energy_only_and_its_updates() {
+        let (storage, mut p) = processor();
+        let mut list = hex("0b61490801879303ab0e04028793030e04038793030e");
+        list.insert(0, (list.len() + 1) as u8);
+        p.parse_perfect_packet(&list);
+        assert_eq!(storage.odyle_energy(), Some((0, 1835)));
+        p.parse_perfect_packet(&hex("0f0c61000801879303db0d03"));
+        assert_eq!(storage.odyle_energy(), Some((0, 1755)));
+        p.parse_perfect_packet(&hex("130c61010801879303cb0f01f0000000"));
+        assert_eq!(storage.odyle_energy(), Some((0, 1995)));
+        // Updates without the energy change nothing, nor another entry in
+        // slot 1 (2026-10-17 15:06:54, logged as 0 basic, 0 charged).
+        p.parse_perfect_packet(&hex("0e0c6100040c0000000e02"));
+        p.parse_perfect_packet(&hex("0d0c6100000987930303"));
+        p.parse_perfect_packet(&hex("0f0c61000c01000000040103"));
+        assert_eq!(storage.odyle_energy(), Some((0, 1995)));
+    }
+
+    #[test]
+    fn odyle_energy_without_charged_energy_is_read() {
+        let (storage, mut p) = processor();
+        let body = "0b61490401879303c80604028793030e04038793030e";
+        let mut list = hex(body);
+        list.insert(0, (list.len() + 1) as u8);
+        p.parse_perfect_packet(&list);
+        assert_eq!(storage.odyle_energy(), Some((840, 0)));
+    }
+
+    /// Whose the energy is, for the window to remember it by: a login's list
+    /// (21:16:50) came 7 s before the self record (21:16:57), so after a
+    /// character switch the name still known is the previous character's.
+    /// The list waits for the self record; an update in a session the game
+    /// has named takes that name.
+    #[test]
+    fn odyle_energy_belongs_to_the_character_the_next_self_record_names() {
+        let storage = DataStorage::new();
+        storage.set_local_identity_from_game(15997, Some("Nullception".into()));
+        storage.set_odyle_energy(30, 840, true);
+        assert_eq!(storage.odyle_owner(), None);
+        storage.set_odyle_energy(30, 880, false);
+        assert_eq!(storage.odyle_owner(), None, "still waiting for the self record");
+        storage.set_local_identity_from_game(4294, Some("Alt".into()));
+        assert_eq!(storage.odyle_owner().as_deref(), Some("Alt"));
+        storage.set_local_identity_from_game(15784, Some("Alt".into()));
+        storage.set_odyle_energy(20, 880, false);
+        assert_eq!(storage.odyle_owner().as_deref(), Some("Alt"));
+
+        // A meter started mid-session: named first, then an update.
+        let storage = DataStorage::new();
+        storage.set_local_identity_from_game(1030, Some("Nullception".into()));
+        storage.set_odyle_energy(25, 840, false);
+        assert_eq!(storage.odyle_owner().as_deref(), Some("Nullception"));
+
+        // An update before anyone is named has no owner yet; the next self
+        // record gives it one.
+        let storage = DataStorage::new();
+        storage.set_odyle_energy(25, 840, false);
+        assert_eq!(storage.odyle_owner(), None);
+        storage.set_local_identity_from_game(1030, Some("Nullception".into()));
+        assert_eq!(storage.odyle_owner().as_deref(), Some("Nullception"));
+
+        // Content counts and the Daily Duty board the same way, with no
+        // energy yet: a meter started mid-session, then a transfer's board.
+        let storage = DataStorage::new();
+        storage.set_local_identity_from_game(1030, Some("Nullception".into()));
+        storage.set_daily_duty_board(vec![DutyOffer { offer: 37, quest: 2_302_143, number: 263, state: 2 }], i64::MAX);
+        assert_eq!(storage.odyle_owner().as_deref(), Some("Nullception"));
+        let storage = DataStorage::new();
+        storage.set_local_identity_from_game(1030, Some("Nullception".into()));
+        storage.set_content_counts(vec![(4, [5, 2])], false);
+        assert_eq!(storage.odyle_owner().as_deref(), Some("Nullception"));
+        // A whole list without the energy waits for the self record too.
+        storage.set_content_counts(vec![(4, [5, 2])], true);
+        assert_eq!(storage.odyle_owner(), None);
+        storage.set_local_identity_from_game(4294, Some("Alt".into()));
+        assert_eq!(storage.odyle_owner().as_deref(), Some("Alt"));
+    }
+
+    /// Leaving an open-world party (2026-10-13, 23:43:42): `1f 92 03`, then
+    /// `13 92 00 00`. The party's rows go and the meter is asked to reset;
+    /// a record that only starts the same is not taken for it.
+    #[test]
+    fn leaving_a_party_clears_it() {
+        use crate::combat::data_storage::PartyMember;
+        let (storage, mut p) = processor();
+        let member = |slot| PartyMember { slot, ..Default::default() };
+        storage.set_party_roster(vec![("Nullception".into(), member(1)), ("JinSoul".into(), member(2))], true);
+        let generation = storage.party_generation();
+        p.parse_perfect_packet(&[0x08, 0x13, 0x92, 0x00, 0x00, 0x01]);
+        assert_eq!(storage.get_party_members().len(), 2);
+        assert!(!storage.take_combat_reset_requested());
+
+        p.parse_perfect_packet(&[0x07, 0x1f, 0x92, 0x03]);
+        p.parse_perfect_packet(&[0x08, 0x13, 0x92, 0x00, 0x00]);
+        assert!(storage.get_party_members().is_empty());
+        assert!(storage.party_generation() > generation);
+        assert!(storage.take_combat_reset_requested());
+
+        // The same party's `1d 97` a moment later doesn't end it again.
+        let generation = storage.party_generation();
+        p.set_override_timestamp(Some(4_000));
+        p.parse_perfect_packet(&[0x08, 0x1d, 0x97, 0x00, 0x00]);
+        assert_eq!(storage.party_generation(), generation);
+        assert!(!storage.take_combat_reset_requested());
+    }
+
+    /// Leaving a raid others are still in (2026-10-14, 03:18:39): the roster
+    /// went from four to three, then `1d 97 00 00` and `1b 97` with the
+    /// party's key, and no roster with you on your own.
+    #[test]
+    fn leaving_a_raid_clears_it() {
+        use crate::combat::data_storage::PartyMember;
+        let (storage, mut p) = processor();
+        let member = |slot| PartyMember { slot, ..Default::default() };
+        let names = ["Casamonstros", "Flechitas", "Nullception"];
+        storage.set_party_roster(names.iter().zip(1..).map(|(n, s)| (n.to_string(), member(s))).collect(), true);
+        let generation = storage.party_generation();
+        p.parse_perfect_packet(&[0x08, 0x1d, 0x97, 0x00, 0x00]);
+        assert!(storage.get_party_members().is_empty());
+        assert!(storage.party_generation() > generation);
+        assert!(storage.take_combat_reset_requested());
+    }
+
+    fn processor() -> (Arc<DataStorage>, StreamProcessor) {
+        let storage = Arc::new(DataStorage::new());
+        let mut p = StreamProcessor::new(storage.clone(), Arc::new(SkillLookup::new()), Arc::new(NpcLookup::new()));
+        p.set_override_timestamp(Some(1_000));
+        (storage, p)
+    }
+
+    fn skill_of(storage: &DataStorage, target: i32, actor: i32, skill: i32) -> SkillCombatData {
+        storage.get_combat_snapshot()[&target].actors[&actor].skills[&(skill, false)].clone()
+    }
+
+    /// Player hits from the captures of 2026-10-04, one per flag the player
+    /// side shows: the flags byte after the hit type, then the angle.
+    #[test]
+    fn hit_flags_are_read_from_player_records() {
+        let parse = |record: &str, target: i32, actor: i32, skill: i32| {
+            let (storage, mut p) = processor();
+            assert!(feed(&mut p, record), "{record}");
+            let s = skill_of(&storage, target, actor, skill);
+            (s.total_damage, s.crit_count, s.parry_count, s.perfect_count, s.double_count, s.frontal_count)
+        };
+        // Flags 0x02, the target parried: 106 damage, front.
+        assert_eq!(parse("e9de020600c80b9147ff003f02020002aff4b76301000000e4506a0100", 44905, 1480, 16730001), (106, 0, 1, 0, 0, 1));
+        // A critical hit the target parried.
+        assert_eq!(parse("fcc2010600bf6bc759d1003203020002c711c75101000000904e660100", 24956, 13759, 13720007), (102, 1, 1, 0, 0, 1));
+        // Flags 0x04, Perfect, no angle.
+        assert_eq!(parse("cac20406009e389147ff00e102040000aff4b76301000000a4587f0100", 74058, 7198, 16730001), (127, 0, 0, 1, 0, 0));
+        // Flags 0x08, Double.
+        assert_eq!(parse("bfe6020600d23310ffd6006f0208000055a2fb5302000000aa56d20e0200", 45887, 6610, 14090000), (1874, 0, 0, 0, 1, 0));
+    }
+
+    /// The flags only monsters' hits on players show in the captures of
+    /// 2026-10-04 (`<target> 06 00 <actor> <skill> <uid> <hit type>`, then the
+    /// plotter). The parser leaves these records out; the plotter is read
+    /// the same way.
+    #[test]
+    fn hit_flags_of_received_hits() {
+        let plotter = |record: &str, at: usize| {
+            let p = read_plotter(&hex(record), at).unwrap();
+            (special_damage::from_hit_flags(p.flags), p.hp, p.angle)
+        };
+        use SpecialDamage::*;
+        // 0x01 Shield Block: 74 damage.
+        assert_eq!(plotter("ca6f0600ca9804b8c112000102010002ebab530701000000904e4a0100", 13), (vec![ShieldBlock], 0, Some(2)));
+        // 0x10 Iron Wall.
+        assert_eq!(plotter("fe2a0600c68d03b8c112000102100002ebab530701000000904e740100", 13), (vec![IronWall], 0, Some(2)));
+        // 0x20 Regeneration, 13 HP back from a hit of 68.
+        assert_eq!(plotter("df7e0600a3b103b0b512000302200d02cbf84e0701000000904e440100", 13), (vec![Regeneration], 13, Some(2)));
+        // 0x40 Perfect Block, with Shield Block or Parry; the hit does 1.
+        assert_eq!(plotter("e9230600ee9e03e4cc120001024100021b09580701000000904e010100", 13), (vec![ShieldBlock, PerfectBlock], 0, Some(2)));
+        assert_eq!(plotter("e06d0600aeb1024cba12000202420002bbc5500701000000904e010100", 13), (vec![Parry, PerfectBlock], 0, Some(2)));
+    }
+
+    /// Restoration HP is a varint: 177 takes two bytes (`b1 01`). Read as one
+    /// byte, as the fixed skip did, the angle came out as Back (the `01`) and
+    /// the value one varint early: the actor's scalar 10000 instead of 889.
+    #[test]
+    fn restoration_hp_is_a_varint() {
+        let record = hex("ed080600f0ef04bab51200010220b10102b3fc4e0701000000904ef9060100");
+        let p = read_plotter(&record, 13).unwrap();
+        assert_eq!((p.flags, p.hp, p.hp_len, p.angle), (0x20, 177, 2, Some(2)));
+        // Then 8 bytes, the scalar and the value: 177 HP is 20 % of 889, as on
+        // every Regeneration hit with HP in the captures.
+        let mut at = 13 + 1 + p.hp_len + 1 + 8;
+        assert_eq!(try_read_varint(&record, &mut at), Some(10_000));
+        assert_eq!(try_read_varint(&record, &mut at), Some(889));
+        // The second two-byte record: 204 HP of 1020.
+        let record = hex("ee0d0600849d03bab51200010220cc0101b3fc4e0701000000904efc070100");
+        let p = read_plotter(&record, 13).unwrap();
+        assert_eq!((p.hp, p.angle), (204, Some(1)));
+        let mut at = 13 + 1 + p.hp_len + 1 + 8 + 2;
+        assert_eq!(try_read_varint(&record, &mut at), Some(1020));
+    }
+
+    /// Hit type 1 (Miss) and 6 (Resist) records have no value. They count on
+    /// the skill and leave damage, hits and targets as they were.
+    #[test]
+    fn misses_and_resists_count_without_damage() {
+        // A Resist of Divine Punishment, the same cast (uid 5d) as a hit of
+        // 1976 on the same target (2026-10-04 00:44:09).
+        let (storage, mut p) = processor();
+        assert!(feed(&mut p, "a8a3041400be77802a04015d02109aa06501000000dc51b80f010100"));
+        assert!(!feed(&mut p, "a8a3040001be77802a04015d06139aa06501000000dc5101c9e1f5050100"));
+        let s = skill_of(&storage, 70056, 15294, 17050240);
+        assert_eq!((s.total_damage, s.hit_count, s.resist_count, s.miss_count), (1976, 1, 1, 0));
+        assert_eq!(storage.get_combat_snapshot()[&70056].total_damage, 1976);
+
+        // A Miss of Dimensional Control (2026-10-04 03:56:02), a skill that
+        // never deals damage, after another hit of the same player.
+        let miss = "e981020000899803172df9000101079d556101000000904e0100";
+        let (storage, mut p) = processor();
+        assert!(!feed(&mut p, miss));
+        assert!(storage.get_combat_snapshot().is_empty(), "no target from a miss alone");
+        let mut hit = ParsedDamagePacket::new();
+        hit.set_timestamp(1_000);
+        hit.set_target_id(33001);
+        hit.set_actor_id(52233);
+        hit.set_skill_code(16000000);
+        hit.set_type(2);
+        hit.set_damage(500);
+        storage.append_damage(hit);
+        assert!(!feed(&mut p, miss));
+        let s = skill_of(&storage, 33001, 52233, 16330007);
+        assert_eq!((s.total_damage, s.hit_count, s.miss_count, s.resist_count), (0, 0, 1, 0));
+        assert_eq!(storage.get_combat_snapshot()[&33001].total_damage, 500);
+    }
+
     /// Map loads from a live capture (2026-10-04): into Fire Temple, a
     /// teleport inside it, then out to World_L_A.
     #[test]
@@ -2816,6 +5027,13 @@ mod tests {
         assert_eq!(storage.current_dungeon_id(), 600021);
         load("34213601000000f2030000dd7f3c00000000006868d047d0c62c470098da46fa63284300000000000000000000004f0000");
         assert_eq!(storage.current_dungeon_id(), 0);
+        // The party stays together and its roster is sent again, still naming
+        // the dungeon it was for: the player is still in the open world.
+        storage.set_current_dungeon(600021);
+        assert_eq!(storage.current_dungeon_id(), 0, "a roster after leaving does not bring the dungeon back");
+        // Back in: the load names the instance.
+        load("34213601000000d52709003b1a350000000000f7e646460d7fb0c60080b045409da54200000000000000000000004f0000");
+        assert_eq!(storage.current_dungeon_id(), 600021);
     }
 
     #[test]
@@ -2845,6 +5063,168 @@ mod tests {
         mob[5] = 0x0c;
         assert!(!p.parse_summon_spawn_at(&mob, 2));
         assert!(!storage.is_summon(47325));
+    }
+
+    #[test]
+    fn a_monsters_summon_is_not_the_player_its_spawn_names() {
+        let storage = Arc::new(DataStorage::new());
+        let npcs = NpcLookup::new();
+        npcs.load_from_json(r#"{"2920063":{"name":"Blazing Totem","isBoss":false},"2920149":{"name":"Wind Spirit","isBoss":false}}"#);
+        let mut p = StreamProcessor::new(storage.clone(), Arc::new(SkillLookup::new()), Arc::new(npcs));
+        // A player, the one the totem burns.
+        storage.append_nickname_authoritative(3640, "Abcd");
+        let mut hit = ParsedDamagePacket::new();
+        hit.set_actor_id(3640);
+        hit.set_target_id(900);
+        hit.set_skill_code(11_010_000);
+        hit.set_damage(100);
+        storage.append_damage(hit);
+        // Blazing Totem 51395 (2920063) from the scarecrow capture of
+        // 2026-10-05, the name it carries made up: kind 0x1C, the u16 mask's
+        // name field naming the player, then the NPC code.
+        let spawn = |id: &str, code: &str| {
+            let mut b = hex("4136");
+            b.extend(hex(id));
+            b.extend(hex("1c00010441626364"));
+            b.extend(hex(code));
+            b.extend(hex("0000020e6ccdc607af014800089b46a0411d43d46f0103030000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000006011101819698"));
+            b.extend(hex("00ffffffffffffffff8075d52abb030000c3910301020e6ccdc607af014800089b460676700000001e00000000"));
+            b
+        };
+        assert!(!p.parse_summon_spawn_at(&spawn("c39103", "7f8e2c"), 2));
+        assert!(!storage.is_summon(51395));
+        let mut burn = ParsedDamagePacket::new();
+        burn.set_actor_id(51395);
+        burn.set_target_id(3640);
+        burn.set_skill_code(1_200_012);
+        burn.set_damage(1);
+        burn.set_dot(true);
+        burn.set_timestamp(2_000);
+        storage.append_damage(burn);
+        assert!(storage.get_heal_snapshot().is_empty(), "its Burn on the player is no healing");
+
+        // A spirit's spawn naming its player still links.
+        assert!(p.parse_summon_spawn_at(&spawn("c49103", "d58e2c"), 2));
+        assert_eq!(storage.get_summon_data().get(&51396), Some(&3640));
+    }
+
+    #[test]
+    fn a_sorcerers_ground_spell_is_linked_to_its_caster() {
+        let storage = Arc::new(DataStorage::new());
+        let mut p = StreamProcessor::new(storage.clone(), Arc::new(SkillLookup::new()), Arc::new(NpcLookup::new()));
+        let varint = |mut v: u32| {
+            let mut out = Vec::new();
+            loop {
+                let byte = (v & 0x7F) as u8;
+                v >>= 7;
+                if v == 0 {
+                    out.push(byte);
+                    return out;
+                }
+                out.push(byte | 0x80);
+            }
+        };
+        // A Bittercold Wind spawn built from its fields: kind 0x1F, a buff
+        // block cast by the spell itself, and its caster after `07 02 06`.
+        let storm = |id: u32, caster: u32| {
+            let mut b = vec![0x41, 0x36];
+            b.extend(varint(id));
+            b.extend([0x1F, 0x00, 0x00]); // kind, no inline name
+            b.extend(&2_920_011u32.to_le_bytes()[..3]); // NPC code
+            b.extend([0x00, 0x40, 0x02]);
+            for v in [1500.0f32, -2500.0, 120.0] {
+                b.extend(v.to_le_bytes()); // position
+            }
+            b.push(0x01);
+            b.extend(varint(4777)); // HP
+            b.extend(varint(4777)); // max HP
+            b.extend([0u8; 40]);
+            b.extend([0x06, 0x01]); // one abnormal
+            b.push(0x11);
+            b.extend(varint(1));
+            b.extend(10_000_001u32.to_le_bytes());
+            b.extend((-1i64).to_le_bytes());
+            b.extend(4_102_412_400_000i64.to_le_bytes());
+            b.extend(varint(id)); // cast by the spell itself
+            b.extend([0x01, 0x02]);
+            for v in [100.0f32, 200.0, 300.0] {
+                b.extend(v.to_le_bytes());
+            }
+            b.extend([0x07, 0x02, 0x06]);
+            b.extend(caster.to_le_bytes());
+            b.extend([0x02, 0xCD, 0x00, 0x28, 0x00]);
+            b
+        };
+        assert!(p.parse_summon_spawn_at(&storm(21_001, 2_600), 2));
+        assert_eq!(storage.get_summon_data().get(&21_001), Some(&2_600));
+
+        // A marker naming the spell itself, or a mob, links nothing.
+        assert!(!p.parse_summon_spawn_at(&storm(21_002, 21_002), 2));
+        storage.append_mob(30000, 1);
+        assert!(!p.parse_summon_spawn_at(&storm(21_003, 30_000), 2));
+        assert!(!storage.is_summon(21_002) && !storage.is_summon(21_003));
+
+        // Some spawns carry `07 02 01` instead of `07 02 06`.
+        let mut other = storm(21_004, 191);
+        let m = other.windows(3).position(|w| w == [0x07, 0x02, 0x06]).unwrap();
+        other[m + 2] = 0x01;
+        assert!(p.parse_summon_spawn_at(&other, 2));
+        assert_eq!(storage.get_summon_data().get(&21_004), Some(&191));
+    }
+
+    /// A party member whose spawn the meter missed is named by their pet's
+    /// spawn, which carries the owner's name and id together. From a
+    /// dungeon run (2026-10-09) replayed from just before the last boss: a
+    /// Ranger's pet (`0x5F`) named her a second in, two minutes before her
+    /// own spawn. Names, legion and ids are stand-ins; entity 1480 has been
+    /// fighting entity 22567, the boss, whose spawn was missed too.
+    #[test]
+    fn a_pets_spawn_names_its_owner() {
+        let (storage, mut p) = processor();
+        assert!(feed(&mut p, "a7b0010600c80b9147ff003f02020002aff4b76301000000e4506a0100"));
+        assert!(storage.get_nickname(1480).is_none());
+
+        // The boss's mechanic (`0x1F`), named after the player it targets,
+        // with the boss in its caster field: no name for the boss.
+        let mechanic = hex(concat!(
+            "4136a582011f000108",
+            "4861776b65796531", // "Hawkeye1"
+            "968f2c0040024fbd66c6c86b804600a05345600d7d43f3b301c0ee6dc0ee6d640000006400000000",
+            "00000000000000000000000000000090650000000000000100000000000000000000000000000000",
+            "000000010602110181969800ffffffffffffffff8075d52abb030000a5820101044fbd66c6c86b80",
+            "4600a05345110284969800ffffffffffffffff8075d52abb030000a58201014fbd66c6c86b804600",
+            "a05345070206",
+            "27580000", // caster field: 22567
+            "002500000000",
+        ));
+        p.parse_summon_spawn_at(&mechanic, 2);
+        assert!(storage.get_nickname(22567).is_none());
+        assert!(storage.get_nickname(1480).is_none());
+
+        // The pet: owner 1480 as its parent_key and in its caster field.
+        let pet = |id: &str, owner_name: &str| {
+            let mut b = hex(&format!("4136{id}5f000108"));
+            b.extend(owner_name.as_bytes());
+            b.extend(hex(concat!(
+                "ac902c00000200c46ac600043f460030524524e90b437e6301f73ef73efc090000fc090000000000",
+                "00000000000000000018f0010064000000f04902000100000000000000a08601000000000000e204",
+                "000101110181969800ffffffffffffffff8075d52abb030000b4c601010200c46ac600043f460030",
+                "5245070206",
+                "c8050000", // owner: 1480, the caster field and the parent_key
+                "ad01000000000f0905",
+                "4775696c64", // legion "Guild"
+                "02000000000000000000000000000000000002cd0096000000d000340100002600000000",
+            )));
+            b
+        };
+        assert!(p.parse_summon_spawn_at(&pet("b4c601", "Hawkeye1"), 2));
+        assert_eq!(storage.get_summon_data().get(&25396), Some(&1480));
+        assert_eq!(storage.get_nickname(1480).as_deref(), Some("Hawkeye1"));
+
+        // A name the game stated is kept.
+        storage.append_nickname_authoritative(1480, "Bowmaster");
+        assert!(p.parse_summon_spawn_at(&pet("b5c601", "Hawkeye1"), 2));
+        assert_eq!(storage.get_nickname(1480).as_deref(), Some("Bowmaster"));
     }
 
     #[test]
@@ -2891,6 +5271,118 @@ mod tests {
         assert_eq!(me.name.as_deref(), Some("Naicha"));
         assert_eq!(storage.local_player_id(), Some(14957));
         assert_eq!((me.server_id, me.class, me.level), (1304, Some(crate::entity::job_class::JobClass::Cleric), Some(28)));
+        assert_eq!(me.gear_score, Some(383));
+    }
+
+    /// The start of another self record (2026-10-11): Nullception, server
+    /// 2312, level 45, gear score 2040 as the character sheet showed it.
+    #[test]
+    fn the_self_record_says_your_gear_score() {
+        let storage = Arc::new(DataStorage::new());
+        let processor = StreamProcessor::new(storage.clone(), Arc::new(SkillLookup::new()), Arc::new(NpcLookup::new()));
+        let record = hex("3336ef295fa1c128370b4e756c6c63657074696f6e080924000000022d000000f8070000f80700002d000000");
+        processor.scan_masked_identity(&record);
+        let me = storage.local_profile();
+        assert_eq!(me.name.as_deref(), Some("Nullception"));
+        assert_eq!((me.server_id, me.level, me.gear_score), (2312, Some(45), Some(2040)));
+    }
+
+    /// Nully's self record (2026-10-16 21:56): its start, then its end, where
+    /// the combat power is (27,564, as the character sheet showed it).
+    #[test]
+    fn the_self_record_says_your_combat_power() {
+        let storage = Arc::new(DataStorage::new());
+        let processor = StreamProcessor::new(storage.clone(), Arc::new(SkillLookup::new()), Arc::new(NpcLookup::new()));
+        let record = hex(concat!(
+            "3336a91d5f81c12837054e756c6c790809200000000223000000aa010000aa01000023000000",
+            "047c45a1010000000000aaa024000220050000000000000000000000000000000000000000000000000000000000000000",
+            "ac6b000000000000ac6b0000000000000501790002000003000004000005000005011900020000030000040000050000",
+            "010300000001000000",
+        ));
+        processor.scan_masked_identity(&record);
+        let me = storage.local_profile();
+        assert_eq!(me.name.as_deref(), Some("Nully"));
+        assert_eq!((me.level, me.gear_score, me.combat_power), (Some(35), Some(426), Some(27_564)));
+    }
+
+    /// The end of Nullception's self record while in a legion (2026-10-14):
+    /// its name sits before the combat power (100,387; the next u64 is
+    /// 100,687), and the entries after it also match once more further on,
+    /// with numbers too large to be one.
+    #[test]
+    fn the_combat_power_is_found_by_what_follows_it() {
+        let tail = hex(concat!(
+            "0000000321f4cb1fae9901000000000090010000ffbedf3fa1010000b959c03ba10100002005055241594f550000000001",
+            "2005000000000000000000000000000000000000000004000000000000000000000023880100000000004f890100000000",
+            "0005019a01020000032400040000050000050112010200000327000400000500000501000000300000000200000002000000",
+            "030000000400000004000000020000000500000002000000",
+        ));
+        assert_eq!(self_combat_power(&tail), Some(100_387));
+        assert_eq!(self_combat_power(&tail[..40]), None);
+    }
+
+    /// Two frames from a capture (2026-10-06 18:12:55): a `2a 37` record that
+    /// ends `44 36 33 7c 42 17 40`, then a mob spawn whose length is `8f 01`.
+    /// Read on across the frame end, that is a player record for entity 51
+    /// (`33`) with mask2 `8f` and the one-byte name `01 41`, "A".
+    fn record_cut_by_its_frame() -> Vec<u8> {
+        hex(concat!(
+            "1b2a37e880011d034a065afad1bff9d53a4436337c421740",
+            "8f014136efb4031c000064902c0000026b519247339aa5c700540a4600d78b3fc7000107076400000064",
+            "000000000000000000000000000000000000006400000064000000010000000000000000000000000000",
+            "00000000000601110181969800ffffffffffffffff8075d52abb030000efb40301026b519247339aa5c7",
+            "00540a46063ed40000002900000000",
+        ))
+    }
+
+    #[test]
+    fn a_record_ends_with_its_frame() {
+        let stream = record_cut_by_its_frame();
+        let mut bundle = vec![0xFF, 0xFF];
+        bundle.extend_from_slice(&(stream.len() as u32).to_le_bytes());
+        bundle.extend_from_slice(&lz4_flex::compress(&stream));
+        let len = crate::capture::framing::length_value(bundle.len());
+        let mut bundled = vec![(len as u8) | 0x80, (len >> 7) as u8];
+        bundled.extend_from_slice(&bundle);
+        for (how, bytes) in [("in the stream", stream), ("in a bundle", bundled)] {
+            let (storage, mut p) = processor();
+            p.consume_stream(&bytes);
+            assert_eq!(storage.get_nickname(51), None, "{how}");
+            // The spawn after it is still read: a mob, code 2920548.
+            assert_eq!(storage.mob_code(55919), Some(2_920_548), "{how}");
+        }
+    }
+
+    /// Four `1d 37` records from a capture (2026-10-05 17:42:14). The second
+    /// ends `33 36 33 36`; its last `33 36`, then the third record's length
+    /// byte and bytes, read as a self record for entity 16 with a two-letter
+    /// name, and the meter took entity 16 for you.
+    #[test]
+    fn a_self_record_needs_your_server_and_class() {
+        let (storage, mut p) = processor();
+        p.consume_stream(&hex(
+            "101d37f5282703ab13e776e776111d37fc792f031557ff33363336101d37a3132703c6b679be97bc111d37ab262f032250d8722f722f",
+        ));
+        assert_eq!(storage.local_player_id(), None);
+        assert_eq!(storage.get_nickname(16), None);
+    }
+
+    /// `4A 36` records, sent about your own stats and no one else's, move the
+    /// local player onto the entity they name when the self record that
+    /// should have done it was missed. The packet's shape is from a player's
+    /// log (2026-10-09), its entity id replaced.
+    #[test]
+    fn own_stats_records_name_the_local_entity() {
+        let storage = Arc::new(DataStorage::new());
+        let mut p = StreamProcessor::new(storage.clone(), Arc::new(SkillLookup::new()), Arc::new(NpcLookup::new()));
+        storage.set_local_identity_from_game(5100, Some("Mine".into()));
+        let record = hex("114A36B8300A0000020050165636"); // entity 6200
+        p.consume_stream(&[record.clone(), record.clone()].concat());
+        assert_eq!(storage.local_player_id(), Some(5100), "two records are not enough");
+        p.consume_stream(&record);
+        assert_eq!(storage.local_player_id(), Some(6200));
+        assert!(storage.local_id_from_scope());
+        assert_eq!(storage.get_nickname(6200), None);
     }
 
     /// A Sorcerer on Ventus (server 1305) killing a mob, from a player's log
@@ -2919,5 +5411,319 @@ mod tests {
         let mut garbled = record.clone();
         garbled[13] = 0x07;
         assert!(!processor.scan_for_embedded_04_8d(&garbled));
+    }
+
+    // ===== Stagger gauge (05 E0), from the solo capture of 2026-10-22 =====
+    //
+    // Frames as the server sent them, with their length; `d8 29` is the
+    // player (Templar, entity 5336), `fb aa 03` Transcendent Bakarma (54651),
+    // `b3 c0 01` the first miniboss (24627).
+
+    const BAKARMA: i32 = 54651;
+    const MINIBOSS: i32 = 24627;
+    const PLAYER: i32 = 5336;
+    const BAKARMA_SPAWN: &str = "8f024136fbaa030c220047412300000200d89f47001ca2c6004c38460000874300c001c0cf24c0cf24640000006400000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000604110181969800ffffffffffffffff8075d52abb030000fbaa03013000d89f47001ca2c6004c3846110284969800ffffffffffffffff8075d52abb030000fbaa030100d89f47001ca2c6004c38461103bc060000ffffffffffffffff8075d52abb030000fbaa030100d89f47001ca2c6004c38461106d6010000ffffffffffffffff8075d52abb030000fbaa030100d89f47001ca2c6004c384601002d00000003012800000028000000437253c900";
+    const MINIBOSS_SPAWN: &str = "e9014136b3c0010c22000341230000028b6cccc64de0044600c8d7c50098b24300fe01e0a712e0a712640000006400000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000603110181969800ffffffffffffffff8075d52abb030000b3c00101288b6cccc64de0044600c8d7c5110284969800ffffffffffffffff8075d52abb030000b3c001018b6cccc64de0044600c8d7c51103bc060000ffffffffffffffff8075d52abb030000b3c001018b6cccc64de0044600c8d7c501002d000000030196000000960000000e7253c500";
+    /// Shield Smite on the miniboss: its hit and the two entries of the same
+    /// hit with no value.
+    const SHIELD_SMITE: [&str; 3] = [
+        "270438b3c0012600d829f4a2b8006a02000002432e1f48020000009e55e3290196040200",
+        "1f0438b3c0010000d829f4a2b8006a02462e1f48020000009e550200",
+        "1f0438b3c0010000d829f4a2b8006a02472e1f48020000009e550200",
+    ];
+
+    /// Each frame its own `consume_stream`, 10 ms apart from `from_ms`.
+    fn stream(p: &mut StreamProcessor, from_ms: i64, frames: &[&str]) {
+        stream_frames(p, from_ms, &frames.iter().map(|f| hex(f)).collect::<Vec<_>>());
+    }
+
+    fn stream_frames(p: &mut StreamProcessor, from_ms: i64, frames: &[Vec<u8>]) {
+        for (i, f) in frames.iter().enumerate() {
+            p.set_override_timestamp(Some(from_ms + 10 * i as i64));
+            assert_eq!(p.consume_stream(f), f.len(), "{f:02x?}");
+        }
+    }
+
+    /// `frame` with its actor (the player, `d8 29` at `at`) made 5352.
+    fn by_5352(frame: &str, at: usize) -> Vec<u8> {
+        let mut f = hex(frame);
+        assert_eq!(f[at], 0xd8);
+        f[at] = 0xe8;
+        f
+    }
+
+    /// Every stagger window with a deduction, times as captured.
+    fn stagger(storage: &DataStorage) -> Vec<StaggerWindow> {
+        storage.fight_stagger(0, i64::MAX)
+    }
+
+    fn hits(w: &StaggerWindow) -> Vec<(i32, i32, u32)> {
+        w.hits.iter().map(|h| (h.actor, h.skill, h.value)).collect()
+    }
+
+    #[test]
+    fn a_stagger_gauge_record_is_read_to_its_last_byte() {
+        assert_eq!(
+            stagger_gauge_record(&hex("1405e0fbaa030301280000000500000002")),
+            Some(StaggerRecord::Gauge { entity: BAKARMA, max: 40, rest: 5, status: 2 })
+        );
+        assert_eq!(stagger_gauge_record(&hex("0c05e0b3c001000302")), Some(StaggerRecord::Break { entity: MINIBOSS }));
+        assert_eq!(stagger_gauge_record(&hex("1405e0fbaa0303012800000005000000")), None, "cut short");
+        assert_eq!(stagger_gauge_record(&hex("1505e0fbaa03030128000000050000000200")), None, "a byte too many");
+        assert_eq!(stagger_gauge_record(&hex("0c05e0b3c001000303")), None);
+    }
+
+    /// Bakarma's gauge coming on at its phase (status `03`, then `02`), a
+    /// Vicious Strike that takes nothing, Punishment taking 35, then the wipe:
+    /// back to full with no break, 5 short.
+    #[test]
+    fn bakarma_wipe_punishment_takes_35_and_the_window_misses_by_5() {
+        let (storage, mut p) = processor();
+        stream(&mut p, 10_000, &[
+            "1405e0fbaa030301280000002800000003",
+            "1405e0fbaa030301280000002800000002",
+            "270438fbaa032600d8296443b70006020000011b539647010000009e55c21001d3010100",
+            "250438fbaa030600d829837bb800090200000147e90f48020000009e55d487020200",
+            "1f0438fbaa030000d829837bb800090248e90f48020000009e550200",
+            "1f0438fbaa030000d829837bb800090249e90f48020000009e550200",
+            "1405e0fbaa030301280000000500000002",
+            "1405e0fbaa030301280000002800000000",
+            "1405e0fbaa030301280000002800000001",
+        ]);
+        let windows = stagger(&storage);
+        assert_eq!(windows.len(), 1);
+        let w = &windows[0];
+        assert_eq!((w.entity, w.max), (BAKARMA, 40));
+        assert_eq!(hits(w), vec![(PLAYER, 12090243, 35)], "Vicious Strike took nothing");
+        assert_eq!(w.result, Outcome::Missed);
+        assert_eq!(w.missing, 5);
+        assert!(!w.incomplete);
+        assert_eq!(w.start, 10_000, "the window opened with the first record (status 03)");
+        assert_eq!(w.end, 10_070, "the reset");
+        assert_eq!(w.hits[0].t, 10_030, "when Punishment hit");
+        assert_eq!(storage.stagger_gauge(BAKARMA), Some((40, 40)));
+    }
+
+    /// The four groups on the first miniboss, each after the update before it
+    /// in the capture (which sets the gauge's value), each its own test.
+    #[test]
+    fn miniboss_shield_smite_takes_10() {
+        let (storage, mut p) = processor();
+        stream(&mut p, 0, &["1405e0b3c0010301960000005500000002"]);
+        stream(&mut p, 100, &SHIELD_SMITE);
+        stream(&mut p, 200, &["1405e0b3c0010301960000004b00000002"]);
+        assert_eq!(hits(&stagger(&storage)[0]), vec![(PLAYER, 12100340, 10)]);
+    }
+
+    #[test]
+    fn miniboss_pummel_takes_3() {
+        let (storage, mut p) = processor();
+        stream(&mut p, 0, &[
+            "1405e0b3c0010301960000002d00000002",
+            "240438b3c0010600d829ccb7b7007a03040002aba4c347010000009e55f30f0100",
+            "1f0438b3c0010000d829ccb7b7007a02ada4c347010000009e550100",
+            "1405e0b3c0010301960000002a00000002",
+        ]);
+        assert_eq!(hits(&stagger(&storage)[0]), vec![(PLAYER, 12040140, 3)]);
+    }
+
+    #[test]
+    fn miniboss_punishing_strike_takes_5() {
+        let (storage, mut p) = processor();
+        stream(&mut p, 0, &[
+            "1405e0b3c0010301960000000e00000002",
+            "240438b3c0010600d829ec05b80086030000022b29e247010000009e55d0300100",
+            "1f0438b3c0010000d829ec05b80086022d29e247010000009e550100",
+            "1405e0b3c0010301960000000900000002",
+        ]);
+        assert_eq!(hits(&stagger(&storage)[0]), vec![(PLAYER, 12060140, 5)]);
+    }
+
+    #[test]
+    fn miniboss_annihilate_breaks_it_at_9_and_the_refill_takes_nothing() {
+        let (storage, mut p) = processor();
+        stream(&mut p, 0, &[
+            "1405e0b3c0010301960000000900000002",
+            "280438b3c0012600d82934b0bb008802000002445b5049010000009e55dfb30101fc110100",
+            "1f0438b3c0010000d82934b0bb008802465b5049010000009e550100",
+            "1f0438b3c0010000d82934b0bb008802475b5049010000009e550100",
+            "0c05e0b3c001000302",
+            "1405e0b3c0010301960000009600000002",
+        ]);
+        let windows = stagger(&storage);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(hits(&windows[0]), vec![(PLAYER, 12300340, 9)]);
+        assert_eq!(windows[0].result, Outcome::Break);
+        assert_eq!(windows[0].missing, 0);
+        assert_eq!(storage.stagger_gauge(MINIBOSS), Some((150, 150)));
+        assert!(storage.stagger_open_window(MINIBOSS).is_none(), "refilled, no window yet");
+    }
+
+    #[test]
+    fn a_bosss_spawn_carries_its_gauge_in_its_last_15_bytes() {
+        let (storage, mut p) = processor();
+        stream(&mut p, 0, &[BAKARMA_SPAWN, MINIBOSS_SPAWN]);
+        assert_eq!(storage.stagger_gauge(BAKARMA), Some((40, 40)));
+        assert_eq!(storage.stagger_gauge(MINIBOSS), Some((150, 150)));
+        assert!(storage.stagger_open_window(BAKARMA).is_none(), "a spawn opens no window");
+
+        // The same spawn without that ending has no gauge.
+        let mut cut = hex(BAKARMA_SPAWN);
+        cut.truncate(cut.len() - 15);
+        assert_eq!(spawn_stagger_gauge(&cut), None);
+        assert_eq!(spawn_stagger_gauge(&hex(SHIELD_SMITE[0])), None);
+        assert_eq!(spawn_stagger_gauge(&hex(MINIBOSS_SPAWN)), Some((150, 150)));
+    }
+
+    /// The miniboss's first stagger hit comes before its first update (Taunt
+    /// took 150 to 130): only its spawn says it started at 150.
+    #[test]
+    fn the_first_deduction_counts_from_the_spawns_value() {
+        let (storage, mut p) = processor();
+        stream(&mut p, 0, &[MINIBOSS_SPAWN]);
+        stream(&mut p, 100, &SHIELD_SMITE);
+        stream(&mut p, 200, &["1405e0b3c0010301960000008c00000002"]);
+        let windows = stagger(&storage);
+        assert_eq!(hits(&windows[0]), vec![(PLAYER, 12100340, 10)]);
+        assert!(!windows[0].incomplete);
+        assert_eq!(windows[0].start, 200, "opened by its first deduction");
+    }
+
+    /// Without the spawn the first update only sets the gauge's value: what
+    /// was taken before it is lost, and the window says so.
+    #[test]
+    fn without_the_spawn_the_first_update_sets_the_value_and_the_window_is_incomplete() {
+        let (storage, mut p) = processor();
+        stream(&mut p, 100, &SHIELD_SMITE);
+        stream(&mut p, 200, &["1405e0b3c0010301960000008c00000002"]);
+        assert!(stagger(&storage).is_empty(), "no deduction");
+        let open = storage.stagger_open_window(MINIBOSS).expect("open");
+        assert!(open.incomplete && open.hits.is_empty());
+        // What follows counts, in that incomplete window.
+        stream(&mut p, 300, &SHIELD_SMITE);
+        stream(&mut p, 400, &["1405e0b3c0010301960000008200000002"]);
+        let windows = stagger(&storage);
+        assert_eq!(hits(&windows[0]), vec![(PLAYER, 12100340, 10)]);
+        assert!(windows[0].incomplete);
+    }
+
+    /// A Punishment DoT tick (`05 38`) on Bakarma, 3519 from the player.
+    const PUNISHMENT_TICK: &str = "130538fbaa0302d8290040e00f48bf1b";
+
+    #[test]
+    fn a_dot_tick_does_not_take_a_hits_deduction_but_takes_one_with_none() {
+        let (storage, mut p) = processor();
+        p.set_dot_skill_ids(HashSet::from([12_090_000]));
+        let other = by_5352(PUNISHMENT_TICK, 7);
+        stream(&mut p, 0, &[BAKARMA_SPAWN, "1405e0fbaa030301280000002800000002"]);
+        stream_frames(&mut p, 100, &[
+            hex("250438fbaa030600d829837bb800090200000147e90f48020000009e55d487020200"),
+            other.clone(),
+            hex("1405e0fbaa030301280000000500000002"),
+        ]);
+        stream_frames(&mut p, 200, &[other, hex("1405e0fbaa030301280000000400000002")]);
+        let windows = stagger(&storage);
+        assert_eq!(hits(&windows[0]), vec![(PLAYER, 12090243, 35), (5352, 12090000, 1)]);
+        assert!(windows[0].hits.iter().all(|h| !h.ambiguous));
+    }
+
+    #[test]
+    fn another_actors_hit_since_the_last_update_makes_it_ambiguous() {
+        let (storage, mut p) = processor();
+        stream(&mut p, 0, &[MINIBOSS_SPAWN]);
+        stream_frames(&mut p, 100, &[
+            by_5352(SHIELD_SMITE[0], 8),
+            hex(SHIELD_SMITE[0]),
+            hex("1405e0b3c0010301960000008c00000002"),
+        ]);
+        let windows = stagger(&storage);
+        assert_eq!(hits(&windows[0]), vec![(PLAYER, 12100340, 10)]);
+        assert!(windows[0].hits[0].ambiguous);
+    }
+
+    #[test]
+    fn a_summons_stagger_is_its_owners() {
+        let (storage, mut p) = processor();
+        storage.register_confirmed_summon_by_id(5352, PLAYER);
+        stream(&mut p, 0, &[MINIBOSS_SPAWN]);
+        stream_frames(&mut p, 100, &[by_5352(SHIELD_SMITE[0], 8), hex("1405e0b3c0010301960000008c00000002")]);
+        assert_eq!(hits(&stagger(&storage)[0]), vec![(PLAYER, 12100340, 10)]);
+    }
+
+    #[test]
+    fn a_deduction_with_no_hit_is_unknowns() {
+        let (storage, mut p) = processor();
+        stream(&mut p, 0, &[MINIBOSS_SPAWN, "1405e0b3c0010301960000008c00000002"]);
+        assert_eq!(hits(&stagger(&storage)[0]), vec![(0, 0, 10)]);
+    }
+
+    /// Shaman Kumbahum (entity 51518, `be 92 03`), 2026-10-22: in one bundle
+    /// Poach (player 12205, `ad 5f`) with three entries of its own and no
+    /// value, then a Punishing Benediction proc, then the gauge 104 to 94.
+    /// The 10 are Poach's: the proc has no entries of its own.
+    #[test]
+    fn a_proc_between_the_hit_and_the_update_does_not_take_its_stagger() {
+        let (storage, mut p) = processor();
+        stream(&mut p, 0, &[
+            "1405e0be92030301960000006800000002",
+            "260438be92032600ad5f5d17b90021020000024be94c48010000009e55c810012f0100",
+            "1f0438be92030000ad5f5d17b90021024ce94c48010000009e550100",
+            "1f0438be92030000ad5f5d17b90021024ee94c48010000009e550100",
+            "1f0438be92030000ad5f5d17b90021024fe94c48010000009e550100",
+            "240438be92030600ad5f913ec2002202000002af70e04b010000009e55aa070100",
+            "1405e0be92030301960000005e00000002",
+        ]);
+        assert_eq!(hits(&stagger(&storage)[0]), vec![(12205, 12130141, 10)]);
+    }
+
+    /// Enhanced Harcon (entity 65183, `9f fd 03`), 2026-10-22, a party of
+    /// five: a Punishing Benediction proc, Judgment (Templar 9348, `84 49`)
+    /// with an entry of its own, a Chanter's hit (10868, `f4 54`) with one,
+    /// then the gauge 947 to 942 and 940. In turn: Judgment 5, as solo, and
+    /// the Chanter 2.
+    #[test]
+    fn a_partys_hits_take_the_updates_after_them_in_turn() {
+        let (storage, mut p) = processor();
+        stream(&mut p, 0, &[
+            "1405e09ffd030301b0040000b303000002",
+            "2404389ffd0306008449913ec2001d02000002af70e04b01000000ee64990a0100",
+            "2404389ffd0306008449d4c5ba001c03040002db46f54801000000ee6494640100",
+            "1f04389ffd0300008449d4c5ba001c02dc46f54801000000ee640100",
+            "2c04389ffd032600f454b66c13012a020800020629966b01000000ee64ad990103aa0faa0faa0f0100",
+            "1f04389ffd030000f454b66c13012a020729966b01000000ee640100",
+            "1405e09ffd030301b0040000ae03000002",
+            "1405e09ffd030301b0040000ac03000002",
+        ]);
+        let w = &stagger(&storage)[0];
+        assert_eq!(hits(w), vec![(9348, 12240340, 5), (10868, 18050230, 2)]);
+        assert!(w.hits.iter().all(|h| !h.ambiguous));
+    }
+
+    /// TCP does not respect the server's blocks: the hit and the update can
+    /// come in two reads.
+    #[test]
+    fn a_hit_and_its_update_in_two_reads() {
+        let (storage, mut p) = processor();
+        stream(&mut p, 0, &[MINIBOSS_SPAWN]);
+        let block: Vec<u8> = SHIELD_SMITE.iter().flat_map(|f| hex(f)).collect();
+        assert_eq!(p.consume_stream(&block), block.len());
+        let update = hex("1405e0b3c0010301960000008c00000002");
+        assert_eq!(p.consume_stream(&update[..5]), 0, "a frame still arriving");
+        assert_eq!(p.consume_stream(&update), update.len());
+        assert_eq!(hits(&stagger(&storage)[0]), vec![(PLAYER, 12100340, 10)]);
+    }
+
+    #[test]
+    fn a_bosss_death_misses_its_open_window() {
+        let (storage, mut p) = processor();
+        stream(&mut p, 0, &[MINIBOSS_SPAWN]);
+        stream(&mut p, 100, &SHIELD_SMITE);
+        stream(&mut p, 200, &["1405e0b3c0010301960000008c00000002"]);
+        p.set_override_timestamp(Some(5_000));
+        storage.mark_entity_dead(MINIBOSS);
+        let w = &stagger(&storage)[0];
+        assert_eq!((w.result, w.missing, w.end), (Outcome::Missed, 140, 5_000));
+        assert_eq!(w.ended, End::Death);
+        assert_eq!(storage.stagger_gauge(MINIBOSS), None);
     }
 }

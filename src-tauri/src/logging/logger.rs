@@ -36,9 +36,28 @@ static DEBUG_WRITER: Mutex<Option<DebugFileWriter>> = Mutex::new(None);
 struct DebugFileWriter {
     writer: std::io::BufWriter<std::fs::File>,
     bytes_written: u64,
+    path: PathBuf,
 }
 
 const MAX_DEBUG_LOG_SIZE: u64 = 5 * 1024 * 1024; // 5 MB
+
+/// The log before the current one, kept when debug.log fills up.
+const PREVIOUS_DEBUG_LOG: &str = "debug.old.log";
+
+/// Opens debug.log for appending. A full one is moved to debug.old.log first
+/// (replacing the one before), so the log always has room: a full log used to
+/// stop it for good, across restarts too.
+fn open_debug_log(path: &std::path::Path) -> Option<DebugFileWriter> {
+    let full = std::fs::metadata(path).is_ok_and(|m| m.len() >= MAX_DEBUG_LOG_SIZE);
+    if full {
+        let previous = path.with_file_name(PREVIOUS_DEBUG_LOG);
+        let _ = std::fs::remove_file(&previous);
+        let _ = std::fs::rename(path, &previous);
+    }
+    let file = crate::platform::atomic_file::private(std::fs::OpenOptions::new().create(true).append(true)).open(path).ok()?;
+    let bytes_written = file.metadata().map(|m| m.len()).unwrap_or(0);
+    Some(DebugFileWriter { writer: std::io::BufWriter::new(file), bytes_written, path: path.to_path_buf() })
+}
 
 /// Custom tracing layer that writes debug+ events to debug.log when enabled.
 struct DebugFileLayer;
@@ -57,13 +76,15 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for DebugFileLayer {
             Some(g) => g,
             None => return,
         };
+        if guard.as_ref().is_some_and(|l| l.bytes_written >= MAX_DEBUG_LOG_SIZE) {
+            let path = guard.as_ref().map(|l| l.path.clone()).unwrap_or_default();
+            *guard = None; // closed before it is moved
+            *guard = open_debug_log(&path);
+        }
         let logger = match guard.as_mut() {
             Some(l) => l,
             None => return,
         };
-        if logger.bytes_written > MAX_DEBUG_LOG_SIZE {
-            return;
-        }
 
         let now = chrono::Local::now().format("%H:%M:%S%.3f");
         let level = match *event.metadata().level() {
@@ -119,16 +140,10 @@ pub fn set_debug_enabled(enabled: bool, log_dir: &std::path::Path) {
     let prev = DEBUG_ENABLED.swap(enabled, Ordering::SeqCst);
     if enabled && !prev {
         let path = log_dir.join("debug.log");
-        if let Ok(file) = std::fs::OpenOptions::new()
-            .create(true).append(true).open(&path)
-        {
+        if let Some(writer) = open_debug_log(&path) {
             {
                 let mut guard = DEBUG_WRITER.lock();
-                let bytes = file.metadata().map(|m| m.len()).unwrap_or(0);
-                *guard = Some(DebugFileWriter {
-                    writer: std::io::BufWriter::new(file),
-                    bytes_written: bytes,
-                });
+                *guard = Some(writer);
             } // guard dropped before tracing
             tracing::info!("Debug file logging started: {}", path.display());
         }
@@ -185,10 +200,7 @@ fn open_packet_file(log_dir: &std::path::Path) -> Option<(std::io::BufWriter<std
         path = log_dir.join(format!("packets_{}_{}.txt", stamp, nth));
         nth += 1;
     }
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
+    let file = crate::platform::atomic_file::private(std::fs::OpenOptions::new().create(true).write(true).truncate(true))
         .open(&path)
         .ok()?;
     let mut writer = std::io::BufWriter::new(file);
@@ -277,8 +289,13 @@ pub fn log_packet(cap: &CapturedPayload) {
     if !PACKET_LOG_ENABLED.load(Ordering::Relaxed) { return; }
     let mut guard = PACKET_LOGGER.lock();
     if let Some(ref mut logger) = *guard {
-        let ts = chrono::Local::now().format("%+");
-        let key = format!("Client:{}", cap.src_port);
+        // The packet's capture time, as the share ring stamps it: libpcap
+        // hands packets over in 100 ms batches, so the time of writing falls
+        // on that grid and hides the real spacing between packets.
+        use chrono::TimeZone;
+        let captured = cap.capture_time_ms().and_then(|ms| chrono::Local.timestamp_millis_opt(ms).single());
+        let ts = captured.unwrap_or_else(chrono::Local::now).format("%+");
+        let key = crate::capture::captured_payload::stream_key(cap.src_port, cap.dst_port);
         let hex: String = cap.data.iter().map(|b| format!("{:02X}", b)).collect();
         let line = format!("{}|{}|{}\n", ts, key, hex);
         if logger.writer.write_all(line.as_bytes()).is_ok() {
@@ -341,6 +358,27 @@ mod packet_log_tests {
 
     fn touch(dir: &std::path::Path, name: &str) {
         std::fs::write(dir.join(name), b"x").unwrap();
+    }
+
+    /// A full debug.log used to stop the debug log for good, across restarts
+    /// (a player's stayed silent from 2026-10-13). Now it moves to
+    /// debug.old.log and a new one starts.
+    #[test]
+    fn a_full_debug_log_rolls_over_instead_of_going_silent() {
+        let dir = temp_dir("debug-roll");
+        let path = dir.join("debug.log");
+        std::fs::write(&path, vec![b'a'; MAX_DEBUG_LOG_SIZE as usize]).unwrap();
+        std::fs::write(dir.join(PREVIOUS_DEBUG_LOG), b"older").unwrap();
+
+        let writer = open_debug_log(&path).expect("opened");
+        assert_eq!(writer.bytes_written, 0);
+        assert_eq!(std::fs::metadata(dir.join(PREVIOUS_DEBUG_LOG)).unwrap().len(), MAX_DEBUG_LOG_SIZE);
+        drop(writer);
+
+        // One with room is appended to, as before.
+        std::fs::write(&path, b"some lines\n").unwrap();
+        assert_eq!(open_debug_log(&path).expect("opened").bytes_written, 11);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

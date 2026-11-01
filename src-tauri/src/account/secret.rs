@@ -27,6 +27,13 @@ pub fn token_path(app_data_dir: &Path) -> PathBuf {
 /// application's folder cannot be decrypted by ours even under the same user.
 const ENTROPY: &[u8] = b"a2tools.account.v1";
 
+/// The guest upload key (`account::guest`): owns the fights uploaded without an
+/// account, until they're claimed. Kept exactly as the account token is.
+pub fn guest_path(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join("guest.dat")
+}
+const GUEST_ENTROPY: &[u8] = b"a2tools.guest.v1";
+
 /// The OS's per-user secret store (DPAPI on Windows, the desktop keyring on
 /// Linux). Where an OS has none,
 /// `platform::secret` refuses rather than degrading quietly: storing a token in
@@ -38,11 +45,20 @@ use crate::platform::UnsealError;
 /// which case the caller must treat the account as not connected rather than
 /// keeping a token only in memory and appearing connected until restart.
 pub fn save(app_data_dir: &Path, token: &str) -> Result<(), String> {
-    let sealed = imp::protect(token.as_bytes(), ENTROPY).map_err(|why| {
+    save_at(&token_path(app_data_dir), ENTROPY, token)
+}
+
+/// Encrypt and write the guest key, as `save` does the account token.
+pub fn save_guest(app_data_dir: &Path, token: &str) -> Result<(), String> {
+    save_at(&guest_path(app_data_dir), GUEST_ENTROPY, token)
+}
+
+fn save_at(path: &Path, entropy: &[u8], token: &str) -> Result<(), String> {
+    let sealed = imp::protect(token.as_bytes(), entropy).map_err(|why| {
         tracing::error!("Could not encrypt the account token ({why}); refusing to store it");
         why
     })?;
-    let path = token_path(app_data_dir);
+    let path = path.to_path_buf();
     let previous = std::fs::read(&path).ok();
     match std::fs::write(&path, &sealed) {
         Ok(()) => {
@@ -85,9 +101,18 @@ pub fn load(app_data_dir: &Path) -> Option<String> {
 /// A file that can never decrypt is deleted rather than retried forever: it
 /// means the Windows profile changed or the file was copied from elsewhere.
 pub fn load_stored(app_data_dir: &Path) -> Stored {
-    let path = token_path(app_data_dir);
+    load_at(&token_path(app_data_dir), ENTROPY)
+}
+
+/// The guest key, as `load_stored` reads the account token.
+pub fn load_guest(app_data_dir: &Path) -> Stored {
+    load_at(&guest_path(app_data_dir), GUEST_ENTROPY)
+}
+
+fn load_at(path: &Path, entropy: &[u8]) -> Stored {
+    let path = path.to_path_buf();
     let Ok(sealed) = std::fs::read(&path) else { return Stored::Missing };
-    match imp::unprotect(&sealed, ENTROPY) {
+    match imp::unprotect(&sealed, entropy) {
         Ok(bytes) => match String::from_utf8(bytes) {
             Ok(token) if !token.is_empty() => Stored::Token(token),
             _ => discard(&path),
@@ -108,7 +133,16 @@ fn discard(path: &Path) -> Stored {
 
 /// Forget the token. Used on sign-out and whenever the server says it is dead.
 pub fn clear(app_data_dir: &Path) {
-    let path = token_path(app_data_dir);
+    clear_at(&token_path(app_data_dir));
+}
+
+/// Forget the guest key: its fights were claimed.
+pub fn clear_guest(app_data_dir: &Path) {
+    clear_at(&guest_path(app_data_dir));
+}
+
+fn clear_at(path: &Path) {
+    let path = path.to_path_buf();
     if let Ok(sealed) = std::fs::read(&path) {
         imp::forget(&sealed);
     }

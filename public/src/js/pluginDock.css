@@ -1,0 +1,201 @@
+/* The plugin dock (pluginDock.js), on top of a plugin window's styles
+   (pluginHost.css): its bar is a strip of tabs, one per docked plugin, and
+   each plugin's panel has a slim bar of its own. */
+/* One row: the tabs (an icon each) on the left, wrapping within their room
+   when there are many, the controls on the right. The bar's empty part is
+   the handle to drag the window by. */
+.dockBar {
+  gap: 6px;
+  padding: 4px 8px 0;
+  align-items: flex-start;
+}
+/* The controls stay level with the first row of tabs. */
+.dockBar > :not(.dockTabs) {
+  margin-top: 7px;
+}
+.dockTabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+}
+/* A tab is the plugin's icon in its colour; its name is the tooltip. */
+.dockTab {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
+  background: none;
+  color: hsl(var(--mark-hue, 210) 60% 62% / 0.55);
+  font: 600 13px/1 inherit;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+.dockTab svg {
+  width: 17px;
+  height: 17px;
+}
+.dockTab:hover,
+.dockTab:focus-visible {
+  color: hsl(var(--mark-hue, 210) 75% 68%);
+  background: rgba(255, 255, 255, 0.05);
+}
+.dockTab:focus-visible {
+  outline: 2px solid var(--theme-accent, #8fc2ff);
+  outline-offset: -2px;
+}
+.dockTabActive {
+  color: hsl(var(--mark-hue, 210) 80% 70%);
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom-color: var(--theme-accent, #8fc2ff);
+}
+/* A plugin showing an alert (it asked for its window to fit one). */
+.dockTabAlert::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff6b6b;
+  box-shadow: 0 0 0 2px rgba(var(--theme-panel, 10, 14, 22), 1);
+}
+.dockLayout,
+.dockFold {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+.dockLayout svg,
+.dockFold svg {
+  width: 15px;
+  height: 15px;
+}
+.dockFold svg {
+  transition: transform 120ms ease;
+}
+.dockFold[aria-pressed="true"] svg {
+  transform: rotate(180deg);
+}
+.dockLayout:hover,
+.dockLayout:focus-visible,
+.dockLayout[aria-pressed="true"],
+.dockFold:hover,
+.dockFold:focus-visible {
+  color: #fff;
+}
+
+.dockStage {
+  display: flex;
+  flex-direction: column;
+}
+.dockPanel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dockPanel[hidden] {
+  display: none;
+}
+.dockPanelBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 3px 10px;
+}
+.dockPanelName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+}
+/* In tabs the tab names the plugin. */
+body:not(.dockStacked) .dockPanelName {
+  visibility: hidden;
+}
+.dockPanelCompact,
+.dockPanelPopOut,
+.dockPanelHide {
+  flex: none;
+  display: flex;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+.dockPanelCompact svg,
+.dockPanelPopOut svg,
+.dockPanelHide svg {
+  width: 13px;
+  height: 13px;
+}
+.dockPanelCompact[aria-pressed="true"],
+.dockPanelCompact:hover,
+.dockPanelCompact:focus-visible,
+.dockPanelPopOut:hover,
+.dockPanelPopOut:focus-visible,
+.dockPanelHide:hover,
+.dockPanelHide:focus-visible {
+  color: #fff;
+}
+.dockFrame {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.dockFrame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+/* Stacked: every shown plugin, one under another, the dock scrolling. */
+body.dockStacked .dockStage {
+  overflow-y: auto;
+}
+body.dockStacked .dockPanel {
+  flex: 1 0 220px;
+  border-top: 1px solid rgba(255, 255, 255, calc(0.08 * var(--panel-alpha, 1)));
+}
+body.dockStacked .dockPanelFirst {
+  border-top: 0;
+}
+body.dockStacked .dockPanelAlert .dockPanelName::after {
+  content: " ●";
+  color: #ff6b6b;
+}
+
+/* Folded: the tab strip alone. */
+body.dockFolded .dockStage {
+  display: none;
+}
+
+

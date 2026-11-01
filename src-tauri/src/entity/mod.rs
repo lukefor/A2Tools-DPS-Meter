@@ -8,3 +8,4 @@ pub mod target_info;
 pub mod fight_record;
 pub mod summon_resolver;
 pub mod details_context;
+pub mod skill_group;

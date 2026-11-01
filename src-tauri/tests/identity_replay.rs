@@ -138,12 +138,18 @@ fn meter_started_mid_session() {
         return;
     };
 
-    // The first kill says who you are, whatever name the meter started with.
+    // The `06 38` records about you point at your entity within seconds,
+    // without a name; the first kill says who you are, whatever name the
+    // meter started with.
     for start_name in [None, Some(STALE_NAME), Some("ApexZ")] {
         let mut r = Replay::new(&path);
         r.storage.set_local_character_name(start_name.map(str::to_string));
+        let s = r.until("2026-10-01T21:27:18");
+        assert_eq!(s.local_player_id(), None, "{start_name:?}: nothing has said yet");
         let s = r.until("2026-10-01T21:27:22");
-        assert_eq!(s.local_player_id(), None, "{start_name:?}: before the first kill");
+        assert_eq!(who(s), (Some(1454), start_name.map(str::to_string), false), "{start_name:?}: before the first kill");
+        assert!(s.local_id_from_scope());
+        assert_eq!(row_name(s, 1454), None, "{start_name:?}: the configured name is not put on it");
         let s = r.until("2026-10-01T21:27:23");
         assert_eq!(who(s), (Some(1454), Some("ApexZ".into()), true), "{start_name:?}");
         let s = r.until("");

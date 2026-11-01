@@ -80,7 +80,7 @@ impl FileReplay {
             let stream_key = parts[1];
             let hex_data = parts[2];
 
-            // Extract port from "Client:PORT"
+            // The server port: after the last ":" in "Client:<client>:<server>" or "Client:<server>"
             let src_port: u16 = stream_key
                 .rsplit(':')
                 .next()

@@ -22,6 +22,15 @@ pub(crate) fn is_gnome() -> bool {
     desktop_is_gnome(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default())
 }
 
+pub(crate) fn is_kde() -> bool {
+    crate::platform::kwin_rules::is_kde(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default())
+}
+
+/// Hyprland, which sets this for every program it starts.
+pub(crate) fn is_hyprland() -> bool {
+    std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some()
+}
+
 fn prefer_xwayland(backend_set: bool, desktop: &str, wayland: bool, x11_available: bool) -> bool {
     !backend_set && wayland && x11_available && desktop_is_gnome(desktop)
 }
@@ -45,7 +54,29 @@ pub fn prepare() -> Option<String> {
         unsafe { std::env::set_var(FORCE_SHM, "1") };
         notes.push(format!("{FORCE_SHM}=1 (set by the meter; set {FORCE_SHM}=0 to hand frames over as GPU buffers)"));
     }
+    notes.push(keep_allocator_lean());
     (!notes.is_empty()).then(|| notes.join("; "))
+}
+
+/// How often freed memory goes back to the system.
+const TRIM_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// glibc's allocator keeps what the meter frees for itself, and with a pool
+/// per busy thread it seldom reuses it: a meter using 60-125 MB held 650-790
+/// MB more, freed but never returned, after an hour of real play (packet
+/// bursts on loading a zone, the work at a fight's end), so it climbed past
+/// 1 GB and on for players. Two pools, and what is free handed back every
+/// TRIM_EVERY. Windows' heap returns freed memory by itself.
+fn keep_allocator_lean() -> String {
+    // SAFETY: prepare runs before any other thread starts; mallopt and
+    // malloc_trim are thread-safe glibc calls with no Rust-side invariants.
+    unsafe { libc::mallopt(libc::M_ARENA_MAX, 2) };
+    let _ = std::thread::Builder::new().name("malloc-trim".into()).spawn(|| loop {
+        std::thread::sleep(TRIM_EVERY);
+        // SAFETY: as above.
+        unsafe { libc::malloc_trim(0) };
+    });
+    "allocator: 2 arenas, freed memory returned every 30 s".to_string()
 }
 
 #[cfg(test)]

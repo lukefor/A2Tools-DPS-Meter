@@ -43,6 +43,7 @@ fn record_spanning(start_ms: i64, duration_ms: i64) -> FightRecord {
             skills: Vec::new(),
             ping_history: Vec::new(),
             heal_skills: Vec::new(),
+            deaths: None,
         },
         actors: Vec::new(),
         is_train: false,
@@ -50,6 +51,11 @@ fn record_spanning(start_ms: i64, duration_ms: i64) -> FightRecord {
         mob_code: 4242,
         dungeon_id: 600093,
         server_id: 0,
+        buffs: None,
+        stagger: None,
+        local_actor_id: None,
+        killed: None,
+        max_hp_from_spawn: None,
     }
 }
 
@@ -93,14 +99,9 @@ fn the_dry_run_writes_both_files_and_neither_holds_a_name() {
     let gz_path = std::path::Path::new(&result.slice_path).with_extension("a2es.gz");
     let gz = std::fs::read(&gz_path).expect("compressed slice written");
     assert_eq!(gz.len(), result.slice_compressed_bytes);
-    assert!(gz.starts_with(&[0x1f, 0x8b]), "not gzip");
-    let mut inflated = Vec::new();
-    {
-        use std::io::Read;
-        flate2::read::GzDecoder::new(&gz[..])
-            .read_to_end(&mut inflated)
-            .expect("decompresses");
-    }
+    // zstd since slice version 3 (share::compress_slice).
+    assert!(gz.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]), "not zstd");
+    let inflated = zstd::decode_all(&gz[..]).expect("decompresses");
     assert_eq!(inflated, slice_bytes, "the gz must round-trip to the slice");
     println!(
         "upload would send {} bytes ({:.1}x smaller than {} on disk)",

@@ -34,9 +34,10 @@
 
 use std::collections::{HashMap, HashSet};
 
+use aho_corasick::AhoCorasick;
 use sha2::{Digest, Sha256};
 
-use super::framing::{self, FrameKind};
+use super::framing::{self, FrameKind, MAX_BUNDLE_DEPTH};
 use super::packet_accumulator::PacketAccumulator;
 
 /// How far before the fight to keep packets. The party roster (`02 97`) and the
@@ -227,9 +228,15 @@ fn frame_packet(body: &[u8]) -> Option<Vec<u8>> {
 /// the fight window, so the prelude cannot carry another fight's numbers.
 const EVENT_OPCODES: &[[u8; 2]] = &[[0x04, 0x38], [0x05, 0x38], [0x1B, 0x92]];
 
-/// Bundles nest. Four is far past anything observed and stops a crafted file
-/// from recursing us to death.
-const MAX_BUNDLE_DEPTH: usize = 4;
+/// Buff changes (`2b 38`), kept from the lead-in on but not in the prelude.
+/// A change renews an instance the add (`2a 38`, kept) began, so the lead-in's
+/// changes still give each buff on at the pull with its start. In a crowd the
+/// prelude's changes were most of a slice: at a field boss (343 players, 13.5
+/// minutes before the pull) 510,125 changes, 24 of its 32 MiB, past what the
+/// log service reads (2026-10-21). On 14 fights of two captures the Buffs
+/// timeline came out as before; dropping adds and removals as well lost buffs
+/// put on before the lead-in.
+const PRELUDE_SKIPPED: &[[u8; 2]] = &[[0x2B, 0x38]];
 
 /// The opcodes the parser reads, and nothing else.
 ///
@@ -245,6 +252,7 @@ pub const ALLOWED_OPCODES: &[(&[u8; 2], &str)] = &[
     (&[0x1B, 0x92], "hp/mp update"),
     (&[0x04, 0x8D], "summon ownership"),
     (&[0x23, 0x36], "zone change"),
+    (&[0x21, 0x36], "map load"),
     (&[0x41, 0x36], "death / spawn"),
     (&[0x42, 0x36], "death (post 2026-06 opcode shift)"),
     (&[0x40, 0x36], "summon spawn"),
@@ -252,13 +260,28 @@ pub const ALLOWED_OPCODES: &[(&[u8; 2], &str)] = &[
     (&[0x45, 0x36], "player spawn"),
     (&[0x33, 0x36], "self identity"),
     (&[0x02, 0x97], "party roster"),
+    // Buffs and debuffs, for the log's Buffs timeline: entity ids, abnormal
+    // and skill ids, timings and a position, no names (capture/abnormal.rs).
+    (&[0x2A, 0x38], "buff/debuff added"),
+    (&[0x2B, 0x38], "buff/debuff changed"),
+    (&[0x2C, 0x38], "buff/debuff removed"),
 ];
+
+/// A map load's or a party roster's opcode (`21 36`, `02 97`), for the
+/// slice's whereabouts; None for any other packet.
+fn whereabouts_opcode(packet: &[u8]) -> Option<[u8; 2]> {
+    let len = super::stream_processor::read_varint(packet, 0);
+    let at = usize::try_from(len.length).ok().filter(|&n| n > 0)?;
+    let op: [u8; 2] = packet.get(at..at + 2)?.try_into().ok()?;
+    matches!(op, [0x21, 0x36] | [0x02, 0x97]).then_some(op)
+}
 
 /// One captured buffer, as the packet logger recorded it.
 #[derive(Debug, Clone)]
 pub struct CapturedPacket {
     pub captured_at_ms: i64,
-    /// The TCP stream this arrived on — the packet logger writes `Client:<port>`.
+    /// The TCP stream this arrived on — the packet logger writes
+    /// `Client:<client port>:<server port>` (older logs `Client:<server port>`).
     ///
     /// Required, and it is not bookkeeping: a captured buffer is a TCP segment,
     /// not a packet. Packets straddle segments, so framing a segment on its own
@@ -321,14 +344,20 @@ impl std::fmt::Display for SliceError {
     }
 }
 
+/// A random key, one per slice: mixed into every token, then dropped. Never
+/// stored or sent, so nobody can hash a list of names or roster ids and look
+/// them up in a slice, or match one person's tokens across slices.
+pub type SliceKey = [u8; 32];
+
 /// A token of exactly `len` bytes, derived from the roster id when we have one
-/// and from the name otherwise.
+/// and from the name otherwise, under the slice's key.
 ///
-/// Hex, so it is always ASCII and always valid UTF-8 at any truncation — a name
-/// is `<u8 len><utf8>`, and emitting a token that split a multi-byte character
-/// would leave the parser reading invalid UTF-8 where it used to read a name.
-fn token_for(name: &str, dbid: u64, len: usize) -> String {
+/// ASCII, so truncation never splits UTF-8. A numeric-only hex token is not a
+/// name to the parser: map its first digit to g-p, outside the hex alphabet,
+/// so every nonempty token has a letter without merging distinct hex tokens.
+fn token_for(key: &SliceKey, name: &str, dbid: u64, len: usize) -> String {
     let mut hasher = Sha256::new();
+    hasher.update(key);
     if dbid != 0 {
         hasher.update(b"a2es-dbid\x00");
         hasher.update(dbid.to_le_bytes());
@@ -347,6 +376,10 @@ fn token_for(name: &str, dbid: u64, len: usize) -> String {
         hex.push('0');
     }
     hex.truncate(len);
+    if !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_digit()) {
+        let letter = (b'g' + (hex.as_bytes()[0] - b'0')) as char;
+        hex.replace_range(..1, &letter.to_string());
+    }
     hex
 }
 
@@ -369,59 +402,209 @@ const MAX_NAME_BYTES: usize = 40;
 /// by that many bytes of plausible text — and blinds that too. Pass two is what
 /// makes the guarantee "no character names", rather than "none of the names we
 /// happened to recognise".
+///
+/// Before both, the name fields: every place a record the parser reads holds
+/// a name (`stream_processor::name_fields`), blinded whether or not the name
+/// is known. That is the only pass for a name of one byte: searched for, its
+/// byte is everywhere. A known name "A" blinded every `41` byte in a slice,
+/// spawn opcodes too, and the slice derived nothing (Daevalog, 2026-10-06).
+/// Pass one leaves one-byte names to the name fields, and looks for a name
+/// under `SHORT_NAME_BYTES` only after its length byte, as the verifier does.
 struct Blinder {
-    /// name bytes -> token bytes, longest first.
+    /// The slice's key (see `SliceKey`).
+    key: SliceKey,
+    /// Pass one: name bytes -> token bytes, longest first, for names of
+    /// `MIN_NAME_BYTES` or more.
     known: Vec<(Vec<u8>, Vec<u8>)>,
-    /// Tokens produced by pass one, so pass two does not blind them again.
+    /// Every name in `known`, found in one pass (pattern i is `known[i]`).
+    /// Looking for each name in turn cost a pass over every packet per name:
+    /// with a few hundred names seen in a session, a slice took over a
+    /// minute to cut, and a save before a zone change held the parser that long.
+    finder: Option<AhoCorasick>,
+    /// Every known name, of any length -> its token: what a name field gets.
+    tokens: HashMap<Vec<u8>, Vec<u8>>,
+    /// Every token written, so no pass blinds one again.
     known_tokens: HashSet<Vec<u8>>,
-    /// Tokens minted in pass two, for the blind map. These have no roster id —
-    /// we never learned who they were, which is the point.
+    /// Tokens minted for names nobody resolved, found in a name field or by
+    /// shape, for the blind map. These have no roster id — we never learned
+    /// who they were, which is the point.
     discovered: HashMap<String, u64>,
+    /// One-byte names and the one-byte tokens given (see `one_byte_token`).
+    one_byte_taken: HashSet<u8>,
+    one_byte_given: HashMap<(String, u64), String>,
 }
 
 impl Blinder {
-    fn new(ordered: &[(&String, &u64)]) -> Self {
-        let mut known = Vec::with_capacity(ordered.len());
-        let mut known_tokens = HashSet::new();
+    fn new(key: SliceKey, ordered: &[(&String, &u64)]) -> Self {
+        let mut blinder = Self::exempting(HashSet::new());
+        blinder.key = key;
+        blinder.one_byte_taken = ordered.iter().filter(|(n, _)| n.len() == 1).map(|(n, _)| n.as_bytes()[0]).collect();
         for (name, dbid) in ordered {
             let raw = name.as_bytes();
             if raw.is_empty() {
                 continue;
             }
-            let token = token_for(name, **dbid, raw.len());
+            let token = blinder.token(name, **dbid, 0);
             debug_assert_eq!(token.len(), raw.len(), "token must not change byte length");
-            known_tokens.insert(token.as_bytes().to_vec());
-            known.push((raw.to_vec(), token.into_bytes()));
+            blinder.known_tokens.insert(token.as_bytes().to_vec());
+            blinder.tokens.insert(raw.to_vec(), token.clone().into_bytes());
+            if raw.len() >= MIN_NAME_BYTES {
+                blinder.known.push((raw.to_vec(), token.into_bytes()));
+            }
         }
+        if !blinder.known.is_empty() {
+            blinder.finder = AhoCorasick::new(blinder.known.iter().map(|(name, _)| name)).ok();
+        }
+        blinder
+    }
+
+    /// Which of `known` appear in `buf`, by index, in `known`'s order.
+    fn present(&self, buf: &[u8]) -> Vec<usize> {
+        // Without the finder (it could not be built), every name, as before.
+        let Some(finder) = &self.finder else { return (0..self.known.len()).collect() };
+        let mut found: Vec<usize> = finder.find_overlapping_iter(buf).map(|m| m.pattern().as_usize()).collect();
+        found.sort_unstable();
+        found.dedup();
+        found
+    }
+
+    /// A blinder that knows no names and leaves `tokens` alone.
+    fn exempting(tokens: HashSet<Vec<u8>>) -> Self {
         Self {
-            known,
-            known_tokens,
+            // Only counts: the tokens it would mint are never written.
+            key: [0; 32],
+            known: Vec::new(),
+            finder: None,
+            tokens: HashMap::new(),
+            known_tokens: tokens,
             discovered: HashMap::new(),
+            one_byte_taken: HashSet::new(),
+            one_byte_given: HashMap::new(),
+        }
+    }
+
+    /// The token a known name got.
+    fn token_of(&self, name: &str) -> Option<&[u8]> {
+        self.tokens.get(name.as_bytes()).map(Vec::as_slice)
+    }
+
+    /// The token for `name`. `salt` above 0 asks for another one (see `mint`).
+    fn token(&mut self, name: &str, dbid: u64, salt: u32) -> String {
+        let len = name.len();
+        if len == 1 {
+            let key = (name.to_string(), dbid);
+            if salt == 0
+                && let Some(token) = self.one_byte_given.get(&key)
+            {
+                return token.clone();
+            }
+            let token = one_byte_token(&self.key, name, dbid, salt, &self.one_byte_taken);
+            self.one_byte_taken.insert(token.as_bytes()[0]);
+            if salt == 0 {
+                self.one_byte_given.insert(key, token.clone());
+            }
+            return token;
+        }
+        match salt {
+            0 => token_for(&self.key, name, dbid, len),
+            _ => token_for(&self.key, &format!("{name}\0{salt}"), 0, len),
         }
     }
 
     fn blind(&mut self, buf: &mut [u8]) -> usize {
-        let mut replaced = self.blind_known(buf);
+        let mut replaced = 0;
+        if !is_event(buf) {
+            let fields = super::stream_processor::name_fields(buf);
+            replaced += self.blind_fields(buf, &fields);
+        }
+        replaced += self.blind_known(buf);
         replaced += self.blind_name_shaped(buf);
         replaced
     }
 
-    /// Pass one: every known name, wherever it appears, length-prefixed or not.
-    fn blind_known(&self, buf: &mut [u8]) -> usize {
+    /// Pass zero: every name field, at any length. A known name gets its
+    /// token, any other name one of its own. Nothing else in the packet
+    /// changes.
+    fn blind_fields(&mut self, buf: &mut [u8], fields: &[super::stream_processor::NameField]) -> usize {
         let mut replaced = 0;
-        for (needle, token) in &self.known {
-            if needle.len() > buf.len() {
+        let mut done_to = 0;
+        for field in fields {
+            let range = field.range.clone();
+            if range.is_empty() || range.start < done_to || range.end > buf.len() {
                 continue;
             }
+            let name = &buf[range.clone()];
+            if self.known_tokens.contains(name) {
+                continue;
+            }
+            let token = match self.tokens.get(name) {
+                Some(token) => token.clone(),
+                None => {
+                    let Ok(text) = std::str::from_utf8(name).map(str::to_string) else { continue };
+                    let token = self.mint(buf, range.clone(), &text);
+                    self.known_tokens.insert(token.clone().into_bytes());
+                    self.discovered.insert(token.clone(), 0);
+                    token.into_bytes()
+                }
+            };
+            buf[range.clone()].copy_from_slice(&token);
+            done_to = range.end;
+            replaced += 1;
+        }
+        replaced
+    }
+
+    /// Write a token for `text`, a name nobody resolved, over `buf[range]`,
+    /// and return it. A token must not spell a known name with the bytes
+    /// around it: "13b87050fe08" before a `44` byte spelled the player name
+    /// "8D".
+    fn mint(&mut self, buf: &mut [u8], range: std::ops::Range<usize>, text: &str) -> String {
+        let mut salt = 0u32;
+        loop {
+            let token = self.token(text, 0, salt);
+            buf[range.clone()].copy_from_slice(token.as_bytes());
+            if salt == 15 || !self.spells_known_name(buf, range.start, range.end) {
+                return token;
+            }
+            salt += 1;
+        }
+    }
+
+    /// Pass one: every known name of `SHORT_NAME_BYTES` or more wherever it
+    /// appears, length-prefixed or not; a shorter one only after its length
+    /// byte, where the game puts a name (see `name_in`). Two bytes turn up in
+    /// ordinary data by chance, and rewriting them there changed that data.
+    /// A name of one byte is left to the name fields.
+    ///
+    /// Names are still replaced one at a time, longest first; only the names
+    /// in the packet are visited. A replacement writes a token, which could
+    /// spell a later name with the bytes around it, so the packet is searched
+    /// again after one.
+    fn blind_known(&self, buf: &mut [u8]) -> usize {
+        let mut replaced = 0;
+        let mut todo = self.present(buf);
+        let mut next = 0;
+        while next < todo.len() {
+            let index = todo[next];
+            next += 1;
+            let (needle, token) = &self.known[index];
+            let before = replaced;
+            let short = needle.len() < SHORT_NAME_BYTES;
             let mut i = 0;
             while i + needle.len() <= buf.len() {
-                if &buf[i..i + needle.len()] == needle.as_slice() {
+                if &buf[i..i + needle.len()] == needle.as_slice()
+                    && (!short || (i > 0 && buf[i - 1] as usize == needle.len()))
+                {
                     buf[i..i + needle.len()].copy_from_slice(token);
                     replaced += 1;
                     i += needle.len();
                 } else {
                     i += 1;
                 }
+            }
+            if replaced > before {
+                todo.truncate(next);
+                todo.extend(self.present(buf).into_iter().filter(|&later| later > index));
             }
         }
         replaced
@@ -440,16 +623,12 @@ impl Blinder {
         // Every buffer handed to the blinder is one framed packet: skip its
         // length and opcode.
         let header = super::stream_processor::read_varint(buf, 0);
-        // Damage, damage over time and HP updates are ids and numbers only.
-        // Scanning them for names blinded skill ids that read as text:
-        // `02 | 50 77 f6 00` (Water Spirit: Ice Chain) is "Pw".
-        if header.length > 0 {
-            let o = header.length as usize;
-            if buf.len() >= o + 2 && EVENT_OPCODES.contains(&[buf[o], buf[o + 1]]) {
-                return 0;
-            }
+        if is_event(buf) {
+            return 0;
         }
-        let mut i = if header.length > 0 { header.length as usize + 2 } else { 0 };
+        let start = if header.length > 0 { header.length as usize + 2 } else { 0 };
+        let tokens = self.token_fields(buf, start);
+        let mut i = start;
         while i < buf.len() {
             let len = buf[i] as usize;
             if !(MIN_NAME_BYTES..=MAX_NAME_BYTES).contains(&len) || i + 1 + len > buf.len() {
@@ -457,26 +636,19 @@ impl Blinder {
                 continue;
             }
             let span = &buf[i + 1..i + 1 + len];
-            if !looks_like_text(span) || self.known_tokens.contains(span) || embedded_header(buf, i) {
+            // A span that runs into a token field is a misreading of it: a
+            // byte before the field's own length taken for one. "!f819387e"
+            // is `09` read as a length, then the token field's length (`21`)
+            // and its first bytes: the service took it for a name not
+            // blinded, and refused the upload (some 4,700 a day, 2026-10-30).
+            let overlaps = tokens.iter().any(|&(from, to)| i + 1 < to && from < i + 1 + len);
+            if !looks_like_text(span) || overlaps || embedded_header(buf, i) {
                 i += 1;
                 continue;
             }
             // Safe: `looks_like_text` already required valid UTF-8.
             let text = std::str::from_utf8(span).unwrap().to_string();
-            // A token must not spell a known name with the bytes around it:
-            // "13b87050fe08" before a `44` byte spelled the player name "8D".
-            let mut salt = 0u32;
-            let token = loop {
-                let token = match salt {
-                    0 => token_for(&text, 0, len),
-                    _ => token_for(&format!("{text}\0{salt}"), 0, len),
-                };
-                buf[i + 1..i + 1 + len].copy_from_slice(token.as_bytes());
-                if salt == 15 || !self.spells_known_name(buf, i + 1, i + 1 + len) {
-                    break token;
-                }
-                salt += 1;
-            };
+            let token = self.mint(buf, i + 1..i + 1 + len, &text);
             self.discovered.insert(token, 0);
             replaced += 1;
             i += 1 + len;
@@ -484,15 +656,121 @@ impl Blinder {
         replaced
     }
 
+    /// Where `buf` (from `start`) holds a token this slice knows as a whole
+    /// `<len><token>` field: the byte ranges of those fields, length byte
+    /// included.
+    fn token_fields(&self, buf: &[u8], start: usize) -> Vec<(usize, usize)> {
+        let mut fields = Vec::new();
+        for j in start..buf.len() {
+            let len = buf[j] as usize;
+            if (MIN_NAME_BYTES..=MAX_NAME_BYTES).contains(&len)
+                && j + 1 + len <= buf.len()
+                && self.known_tokens.contains(&buf[j + 1..j + 1 + len])
+            {
+                fields.push((j, j + 1 + len));
+            }
+        }
+        fields
+    }
+
     /// Does any known name overlap `buf[from..to]`?
     fn spells_known_name(&self, buf: &[u8], from: usize, to: usize) -> bool {
-        self.known.iter().any(|(name, _)| {
-            let n = name.len();
-            let start = (from + 1).saturating_sub(n);
-            let end = (to + n - 1).min(buf.len());
-            end >= start + n && buf[start..end].windows(n).any(|w| w == name.as_slice())
+        let Some(finder) = &self.finder else {
+            return self.known.iter().any(|(name, _)| {
+                let n = name.len();
+                let start = (from + 1).saturating_sub(n);
+                let end = (to + n - 1).min(buf.len());
+                end >= start + n && buf[start..end].windows(n).any(|w| w == name.as_slice())
+            });
+        };
+        let longest = self.known.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+        let lo = (from + 1).saturating_sub(longest);
+        let hi = (to + longest).saturating_sub(1).min(buf.len());
+        if hi <= lo {
+            return false;
+        }
+        // A name of n bytes counts where it lies inside
+        // [from + 1 - n, to + n - 1): it shares a byte with buf[from..to].
+        finder.find_overlapping_iter(&buf[lo..hi]).any(|m| {
+            let (start, end, n) = (lo + m.start(), lo + m.end(), m.end() - m.start());
+            start >= (from + 1).saturating_sub(n) && end <= (to + n - 1).min(buf.len())
         })
     }
+}
+
+/// Damage, damage over time and HP updates are ids and numbers only: no
+/// pass looks in them for names. Scanning them blinded skill ids that read as
+/// text: `02 | 50 77 f6 00` (Water Spirit: Ice Chain) is "Pw".
+fn is_event(packet: &[u8]) -> bool {
+    let header = super::stream_processor::read_varint(packet, 0);
+    let o = header.length.max(0) as usize;
+    header.length > 0 && packet.len() >= o + 2 && EVENT_OPCODES.contains(&[packet[o], packet[o + 1]])
+}
+
+/// A one-byte token: a letter, so the parser still reads it as a name and
+/// joins the player's records by it (a hex digit is no name to it). Never
+/// the name itself, another one-byte name, or a token already given, so two
+/// players never share one.
+fn one_byte_token(key: &SliceKey, name: &str, dbid: u64, salt: u32, taken: &HashSet<u8>) -> String {
+    const LETTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let mut hasher = Sha256::new();
+    hasher.update(key);
+    hasher.update(b"a2es-one\x00");
+    match dbid {
+        0 => hasher.update(name.as_bytes()),
+        _ => hasher.update(dbid.to_le_bytes()),
+    }
+    hasher.update(salt.to_le_bytes());
+    let digest = hasher.finalize();
+    let free = |b: &u8| !taken.contains(b) && name.as_bytes() != [*b];
+    let pick = digest.iter().map(|d| LETTERS[*d as usize % LETTERS.len()]).find(free);
+    let pick = pick.or_else(|| LETTERS.iter().copied().find(free)).unwrap_or(b'q');
+    (pick as char).to_string()
+}
+
+/// Each packet of a record, bundles opened: what the parser reads one at a
+/// time.
+fn packets_in(record: &[u8]) -> Vec<Vec<u8>> {
+    fn walk_into(buffer: &[u8], out: &mut Vec<Vec<u8>>, depth: usize, top: bool) {
+        if depth > MAX_BUNDLE_DEPTH {
+            return;
+        }
+        let frames = if top { framing::walk(buffer).frames } else { framing::walk_inner(buffer).frames };
+        for frame in frames {
+            match frame.kind {
+                FrameKind::Packet => out.push(frame.bytes(buffer).to_vec()),
+                FrameKind::Bundle => {
+                    if top {
+                        framing::new_read();
+                    }
+                    if let Some(inner) = framing::decompress_bundle(frame.payload(buffer)) {
+                        walk_into(&inner, out, depth + 1, false);
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk_into(record, &mut out, 0, true);
+    out
+}
+
+/// What every name field of the records holds (event packets aside): where
+/// the leak checks look for names of any length, a one-byte name too. Where a
+/// record holds a name, a chance match is no concern.
+fn name_field_contents(records: &[(i32, Vec<u8>)]) -> HashSet<Vec<u8>> {
+    let mut out = HashSet::new();
+    for (_, record) in records {
+        for packet in packets_in(record) {
+            if is_event(&packet) {
+                continue;
+            }
+            for field in super::stream_processor::name_fields(&packet) {
+                out.insert(packet[field.range].to_vec());
+            }
+        }
+    }
+    out
 }
 
 /// Is `buf[i]` the last byte of an embedded packet's length, followed by a
@@ -514,7 +792,7 @@ fn embedded_header(buf: &[u8], i: usize) -> bool {
 /// Is this run plausibly a name or other human-readable string?
 ///
 /// Deliberately broad. A false positive costs a field of binary data getting
-/// overwritten with hex of the same length, which the acceptance test would
+/// overwritten with a token of the same length, which the acceptance test would
 /// catch as drifting damage. A false negative costs someone's name being
 /// uploaded, which nothing would catch.
 fn looks_like_text(span: &[u8]) -> bool {
@@ -559,6 +837,9 @@ pub fn expand(record: &[u8]) -> Vec<u8> {
             match frame.kind {
                 FrameKind::Packet => out.extend_from_slice(frame.bytes(buffer)),
                 FrameKind::Bundle => {
+                    if top {
+                        framing::new_read();
+                    }
                     if let Some(inner) = framing::decompress_bundle(frame.payload(buffer)) {
                         walk_into(&inner, out, depth + 1, false);
                     }
@@ -594,6 +875,9 @@ pub fn unblinded_names(records: &[(i32, Vec<u8>)], blind_map: &HashMap<String, u
                     *found += blinder.blind_name_shaped(&mut packet);
                 }
                 FrameKind::Bundle => {
+                    if top {
+                        framing::new_read();
+                    }
                     if let Some(inner) = framing::decompress_bundle(frame.payload(buffer)) {
                         walk(&inner, false, depth + 1, blinder, found);
                     }
@@ -601,11 +885,7 @@ pub fn unblinded_names(records: &[(i32, Vec<u8>)], blind_map: &HashMap<String, u
             }
         }
     }
-    let mut blinder = Blinder {
-        known: Vec::new(),
-        known_tokens: blind_map.keys().map(|t| t.as_bytes().to_vec()).collect(),
-        discovered: HashMap::new(),
-    };
+    let mut blinder = Blinder::exempting(blind_map.keys().map(|t| t.as_bytes().to_vec()).collect());
     let mut found = 0;
     for (_, record) in records {
         walk(record, true, 0, &mut blinder, &mut found);
@@ -616,14 +896,120 @@ pub fn unblinded_names(records: &[(i32, Vec<u8>)], blind_map: &HashMap<String, u
 /// How many of `names` appear anywhere in the slice, bundles decompressed:
 /// the client's own verifier, run again on the server with the names the
 /// upload says it showed.
+///
+/// One walk over the slice and one pass over each record for every name at
+/// once: looking for each name in turn over every record took 8-31 seconds
+/// for 200 names on a 10-18 MB fight, past the service's CPU limit
+/// (2026-10-28). Each record is expanded as `expand` does it (its packets,
+/// bundles opened, end to end), the name fields read from the same packets
+/// as `name_field_contents` reads them, so the count is the one looking for
+/// each name in turn gave (the tests keep that as the reference).
 pub fn leaked_names(records: &[(i32, Vec<u8>)], names: &[String]) -> usize {
-    let plaintext: Vec<Vec<u8>> = records.iter().map(|(_, p)| expand(p)).collect();
-    names
+    // A masked name (a guest upload's "Na***a", "A*") is the meter's, never
+    // the game's: finding it proves nothing, and a short one turns up in a
+    // big fight's data by chance ("02 41 2a" is three bytes; 14 MB holds
+    // about one), which refused the upload as a leak (2026-10-30).
+    let names: Vec<&[u8]> = names
         .iter()
         .map(|n| n.as_bytes())
-        .filter(|n| n.len() >= MIN_NAME_BYTES)
-        .filter(|n| plaintext.iter().any(|buf| buf.windows(n.len()).any(|w| w == *n)))
-        .count()
+        .filter(|n| !n.is_empty() && !n.contains(&b'*'))
+        .collect();
+    if names.is_empty() {
+        return 0;
+    }
+    let needles: Vec<(usize, Vec<u8>)> = names.iter().enumerate()
+        .filter_map(|(i, n)| name_needle(n).map(|needle| (i, needle)))
+        .collect();
+    let finder = match needles.is_empty() {
+        true => None,
+        false => AhoCorasick::new(needles.iter().map(|(_, needle)| needle)).ok(),
+    };
+    let mut found = vec![false; names.len()];
+    let mut fields: HashSet<Vec<u8>> = HashSet::new();
+    let mut plain = Vec::new();
+    for (_, record) in records {
+        plain.clear();
+        for_each_packet(record, &mut |packet| {
+            if !is_event(packet) {
+                for field in super::stream_processor::name_fields(packet) {
+                    fields.insert(packet[field.range].to_vec());
+                }
+            }
+            plain.extend_from_slice(packet);
+        });
+        match &finder {
+            Some(finder) => {
+                for m in finder.find_overlapping_iter(&plain) {
+                    found[needles[m.pattern().as_usize()].0] = true;
+                }
+            }
+            // Never pass unchecked: one name at a time, as before.
+            None => {
+                for (i, name) in names.iter().enumerate() {
+                    found[i] = found[i] || name_in(&plain, name);
+                }
+            }
+        }
+    }
+    names.iter().zip(&found).filter(|(n, found)| **found || fields.contains(**n)).count()
+}
+
+/// Each packet of a record, bundles opened, in order: what `packets_in`
+/// lists and `expand` joins, without a copy of each.
+fn for_each_packet(record: &[u8], visit: &mut dyn FnMut(&[u8])) {
+    fn walk_into(buffer: &[u8], visit: &mut dyn FnMut(&[u8]), depth: usize, top: bool) {
+        if depth > MAX_BUNDLE_DEPTH {
+            return;
+        }
+        let frames = if top { framing::walk(buffer).frames } else { framing::walk_inner(buffer).frames };
+        for frame in frames {
+            match frame.kind {
+                FrameKind::Packet => visit(frame.bytes(buffer)),
+                FrameKind::Bundle => {
+                    if top {
+                        framing::new_read();
+                    }
+                    if let Some(inner) = framing::decompress_bundle(frame.payload(buffer)) {
+                        walk_into(&inner, visit, depth + 1, false);
+                    }
+                }
+            }
+        }
+    }
+    walk_into(record, visit, 0, true);
+}
+
+/// Names this short are only looked for as the game sends a name, after its
+/// length byte. Two bytes match ordinary data by chance: "Jo" or "Mo" turns up
+/// 8-23 times in 3.8 MB of a party's traffic, so one player named that, even
+/// a bystander, failed every slice after as a leak (2026-10-07).
+const SHORT_NAME_BYTES: usize = 4;
+
+/// Whether `name` is in `buf`: anywhere, or for a short name, length-prefixed.
+/// Never for a name of one byte: `01 41` is "A" after its length byte, and
+/// also the end of a frame length `8f 01` before a spawn `41 36`. A one-byte
+/// name is looked for in the name fields only (`name_field_contents`).
+/// What `name_in` looks for: the name, or under `SHORT_NAME_BYTES` the name
+/// after its length byte. None for a name too short to look for.
+fn name_needle(name: &[u8]) -> Option<Vec<u8>> {
+    if name.len() < MIN_NAME_BYTES {
+        return None;
+    }
+    if name.len() >= SHORT_NAME_BYTES {
+        return Some(name.to_vec());
+    }
+    Some(std::iter::once(name.len() as u8).chain(name.iter().copied()).collect())
+}
+
+fn name_in(buf: &[u8], name: &[u8]) -> bool {
+    if name.len() < MIN_NAME_BYTES {
+        return false;
+    }
+    if name.len() >= SHORT_NAME_BYTES {
+        return buf.len() >= name.len() && buf.windows(name.len()).any(|w| w == name);
+    }
+    let needle: Vec<u8> = std::iter::once(name.len() as u8).chain(name.iter().copied()).collect();
+    buf.len() >= needle.len() && buf.windows(needle.len()).any(|w| w == needle.as_slice())
 }
 
 /// Is this packet one the parser reads (and, in the prelude, a state packet)?
@@ -637,7 +1023,7 @@ fn is_allowed(packet: &[u8], keep: Keep) -> bool {
         return false;
     }
     let op = [packet[o], packet[o + 1]];
-    if keep == Keep::State && EVENT_OPCODES.contains(&op) {
+    if keep == Keep::State && (EVENT_OPCODES.contains(&op) || PRELUDE_SKIPPED.contains(&op)) {
         return false;
     }
     ALLOWED_OPCODES.iter().any(|(allowed, _)| **allowed == op)
@@ -752,6 +1138,7 @@ fn filter_stream(
                 out.push(packet);
             }
             FrameKind::Bundle => {
+                framing::new_read();
                 let Some(decompressed) = framing::decompress_bundle(frame.payload(buffer)) else {
                     continue;
                 };
@@ -774,11 +1161,14 @@ fn filter_stream(
 /// `names` should carry every character name the meter resolved during the
 /// fight, roster members and otherwise — anything absent from it is a name the
 /// blinder cannot see, and the verifier cannot catch either.
+///
+/// `key` must be fresh random bytes for each slice (see `SliceKey`).
 pub fn build(
     packets: &[CapturedPacket],
     fight_start_ms: i64,
     fight_end_ms: i64,
     names: &NameMap,
+    key: SliceKey,
 ) -> Result<EvidenceSlice, SliceError> {
     let from = fight_start_ms - LEAD_IN_MS;
     let to = fight_end_ms + TAIL_MS;
@@ -789,14 +1179,13 @@ pub fn build(
     let mut ordered: Vec<(&String, &u64)> = names.iter().collect();
     ordered.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(b.0)));
 
+    let mut blinder = Blinder::new(key, &ordered);
     let mut blind_map: HashMap<String, u64> = HashMap::new();
     for (name, dbid) in ordered.iter().copied() {
-        if name.as_bytes().is_empty() {
-            continue;
+        if let Some(token) = blinder.token_of(name) {
+            blind_map.insert(String::from_utf8_lossy(token).into_owned(), *dbid);
         }
-        blind_map.insert(token_for(name, *dbid, name.as_bytes().len()), *dbid);
     }
-    let mut blinder = Blinder::new(&ordered);
 
     let mut stats = SliceStats::default();
     let mut records: Vec<(i32, Vec<u8>)> = Vec::new();
@@ -806,6 +1195,12 @@ pub fn build(
     // next segment starting mid-packet — the window selects what is *kept*, not
     // what is parsed.
     let mut streams: HashMap<&str, PacketAccumulator> = HashMap::new();
+    // The latest map load and party roster from before the prelude: what
+    // says which dungeon this is. A run entered more than PRELUDE_MS before
+    // its last boss uploaded neither, and the service filed the fight as the
+    // open world (some 90 a day the meter had filed under a dungeon,
+    // 2026-10-30). Kept only when the window holds no newer one.
+    let mut whereabouts: Vec<(i64, Vec<u8>)> = Vec::new();
 
     for cap in packets {
         let acc = streams
@@ -820,7 +1215,16 @@ pub fn build(
         let consumed = filter_stream(acc.snapshot(), &mut blinder, &mut kept, &mut stats, keep);
         acc.discard_bytes(consumed);
 
-        if cap.captured_at_ms < from - PRELUDE_MS || cap.captured_at_ms > to {
+        if cap.captured_at_ms < from - PRELUDE_MS {
+            for packet in kept {
+                if let Some(op) = whereabouts_opcode(&packet) {
+                    whereabouts.retain(|(_, p)| whereabouts_opcode(p) != Some(op));
+                    whereabouts.push((cap.captured_at_ms, packet));
+                }
+            }
+            continue;
+        }
+        if cap.captured_at_ms > to {
             continue;
         }
 
@@ -833,6 +1237,12 @@ pub fn build(
     if records.is_empty() {
         return Err(SliceError::Empty);
     }
+    // First, so the window's own map load or roster, if any, still wins.
+    whereabouts.retain(|(_, w)| !records.iter().any(|(_, p)| whereabouts_opcode(p) == whereabouts_opcode(w)));
+    for (at, packet) in whereabouts.into_iter().rev() {
+        let dt = (at - fight_start_ms).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        records.insert(0, (dt, packet));
+    }
 
     // The verifier. Everything above is pattern work; this is what we actually
     // rely on. A name that reaches here means the slice is not safe to send, and
@@ -842,17 +1252,31 @@ pub fn build(
     // and searching a compressed buffer for a plaintext name finds nothing no
     // matter what is inside it. A verifier that passes vacuously is worse than
     // no verifier, because it is believed.
-    let plaintext: Vec<Vec<u8>> = records.iter().map(|(_, p)| expand(p)).collect();
-    for (name, _) in &ordered {
-        let needle = name.as_bytes();
-        if needle.is_empty() {
-            continue;
+    //
+    // Every name in one pass over each record (see `Blinder::finder`); the
+    // name reported is still the first in `ordered` that was found.
+    let needles: Vec<(usize, Vec<u8>)> = ordered.iter().enumerate()
+        .filter_map(|(i, (name, _))| name_needle(name.as_bytes()).map(|needle| (i, needle)))
+        .collect();
+    let leaked = match AhoCorasick::new(needles.iter().map(|(_, needle)| needle)) {
+        Ok(finder) => records.iter()
+            .filter_map(|(_, packet)| {
+                finder.find_overlapping_iter(&expand(packet)).map(|m| needles[m.pattern().as_usize()].0).min()
+            })
+            .min(),
+        // Never pass unchecked: one name at a time, as before.
+        Err(_) => {
+            let plaintext: Vec<Vec<u8>> = records.iter().map(|(_, p)| expand(p)).collect();
+            ordered.iter().position(|(name, _)| plaintext.iter().any(|buf| name_in(buf, name.as_bytes())))
         }
-        for buf in &plaintext {
-            if buf.len() >= needle.len() && buf.windows(needle.len()).any(|w| w == needle) {
-                return Err(SliceError::NameLeaked(needle.len()));
-            }
-        }
+    };
+    if let Some(first) = leaked {
+        return Err(SliceError::NameLeaked(ordered[first].0.len()));
+    }
+    // Every name, a one-byte name too, where a record holds one.
+    let fields = name_field_contents(&records);
+    if let Some((name, _)) = ordered.iter().find(|(name, _)| !name.is_empty() && fields.contains(name.as_bytes())) {
+        return Err(SliceError::NameLeaked(name.len()));
     }
 
     // Names discovered structurally have no roster id: we blinded them without
@@ -873,7 +1297,30 @@ pub fn build(
 pub const MAGIC: &[u8; 4] = b"A2ES";
 /// 2: lengths follow the corrected framing rule. Version 1 slices are read by
 /// re-framing their records (see `upgrade_v1_record`).
-pub const VERSION: u16 = 2;
+/// 3: a bundle record is stored unpacked (its inner stream, not LZ4), so the
+/// slice's own compression can reach it: most of a slice is bundles, and LZ4
+/// output does not compress again (37% smaller than gzipped v2 with zstd, on
+/// real fights, 2026-10-16). Read back, it is wrapped as before.
+pub const VERSION: u16 = 3;
+
+/// A version 3 record: the packet as it is, or a bundle's inner stream.
+const RECORD_PACKET: u8 = 0;
+const RECORD_BUNDLE: u8 = 1;
+
+/// The inner stream of a bundle record, or None for any other packet.
+fn bundle_inner(packet: &[u8]) -> Option<Vec<u8>> {
+    let len = super::stream_processor::read_varint(packet, 0);
+    let o = usize::try_from(len.length).ok().filter(|&n| n > 0)?;
+    let payload = packet.get(o..)?;
+    if payload.get(..2)? != [0xFF, 0xFF] {
+        return None;
+    }
+    framing::new_read();
+    let inner = framing::decompress_bundle(payload)?;
+    // Only when it wraps back to the same bytes: the record then reads back
+    // exactly as it went in.
+    (rewrap_bundle(&inner).as_deref() == Some(packet)).then_some(inner)
+}
 
 /// Serialise to the `.a2es` container.
 ///
@@ -881,8 +1328,11 @@ pub const VERSION: u16 = 2;
 /// "A2ES" | u16 version | u16 opcode_count | [u16 opcode]*
 ///        | u16 blind_count | [u8 token_len | token bytes | u64 dbid]*
 ///        | u32 record_count
-///        | [ i32 dt_ms | u16 len | bytes ]*
+///        | [ i32 dt_ms | u8 kind | u32 len | bytes ]*      (version 3)
 /// ```
+///
+/// `kind` 0 is the packet as it is, 1 a bundle's inner stream (see VERSION).
+/// Versions 1 and 2 had `u16 len | bytes` and no kind.
 ///
 /// Deliberately not the game's framing: a reader must not be able to mistake a
 /// slice for a capture, and `a2t-inspect` needs a magic number to refuse one.
@@ -908,8 +1358,13 @@ pub fn encode(slice: &EvidenceSlice) -> Vec<u8> {
     out.extend_from_slice(&(slice.records.len() as u32).to_le_bytes());
     for (dt, packet) in &slice.records {
         out.extend_from_slice(&dt.to_le_bytes());
-        out.extend_from_slice(&(packet.len() as u16).to_le_bytes());
-        out.extend_from_slice(packet);
+        let (kind, bytes) = match bundle_inner(packet) {
+            Some(inner) => (RECORD_BUNDLE, std::borrow::Cow::Owned(inner)),
+            None => (RECORD_PACKET, std::borrow::Cow::Borrowed(packet.as_slice())),
+        };
+        out.push(kind);
+        out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        out.extend_from_slice(&bytes);
     }
     out
 }
@@ -917,43 +1372,85 @@ pub fn encode(slice: &EvidenceSlice) -> Vec<u8> {
 /// Read a `.a2es` back. Used by the server, and by `a2t-inspect` so a user can
 /// see exactly what an upload would contain.
 pub fn decode(data: &[u8]) -> Option<(Vec<(i32, Vec<u8>)>, HashMap<String, u64>)> {
-    let mut o = 0usize;
-    fn take<'a>(data: &'a [u8], o: &mut usize, n: usize) -> Option<&'a [u8]> {
-        if *o + n > data.len() {
-            return None;
-        }
-        let s = &data[*o..*o + n];
-        *o += n;
-        Some(s)
-    }
-    if take(data, &mut o, 4)? != MAGIC {
-        return None;
-    }
-    let version = u16::from_le_bytes(take(data, &mut o, 2)?.try_into().ok()?);
-    if version != VERSION && version != 1 {
-        return None;
-    }
-    let op_count = u16::from_le_bytes(take(data, &mut o, 2)?.try_into().ok()?) as usize;
-    take(data, &mut o, op_count * 2)?;
+    decode_from(data, usize::MAX)
+}
 
-    let blind_count = u16::from_le_bytes(take(data, &mut o, 2)?.try_into().ok()?) as usize;
+/// `decode` from a stream, so a compressed slice is read as it is unpacked,
+/// never whole. None once the records come to more than `max_record_bytes` as
+/// they read back: a version 3 bundle is counted wrapped, as version 2 stored
+/// it, so one fight has one size in every version and a limit on it takes or
+/// refuses the fight whichever version carries it. The record-count allowance
+/// also scales with this budget, with room for the initial 4,096 records at least.
+pub fn decode_from(mut r: impl std::io::Read, max_record_bytes: usize) -> Option<(Vec<(i32, Vec<u8>)>, HashMap<String, u64>)> {
+    use std::io::Read;
+    fn array<const N: usize>(r: &mut impl Read) -> Option<[u8; N]> {
+        let mut b = [0u8; N];
+        r.read_exact(&mut b).ok()?;
+        Some(b)
+    }
+    // Read as far as the data goes, so a length that lies allocates nothing.
+    fn bytes<R: Read>(r: &mut R, n: usize) -> Option<Vec<u8>> {
+        let mut v = Vec::new();
+        r.by_ref().take(n as u64).read_to_end(&mut v).ok()?;
+        (v.len() == n).then_some(v)
+    }
+    if array::<4>(&mut r)? != *MAGIC {
+        return None;
+    }
+    let version = u16::from_le_bytes(array(&mut r)?);
+    if !(1..=VERSION).contains(&version) {
+        return None;
+    }
+    let op_count = u16::from_le_bytes(array(&mut r)?) as usize;
+    bytes(&mut r, op_count * 2)?;
+
+    let blind_count = u16::from_le_bytes(array(&mut r)?) as usize;
     let mut blind_map = HashMap::with_capacity(blind_count);
     for _ in 0..blind_count {
-        let len = take(data, &mut o, 1)?[0] as usize;
-        let token = std::str::from_utf8(take(data, &mut o, len)?)
-            .ok()?
-            .to_string();
-        let dbid = u64::from_le_bytes(take(data, &mut o, 8)?.try_into().ok()?);
+        let len = array::<1>(&mut r)?[0] as usize;
+        let token = String::from_utf8(bytes(&mut r, len)?).ok()?;
+        let dbid = u64::from_le_bytes(array(&mut r)?);
         blind_map.insert(token, dbid);
     }
 
-    let rec_count = u32::from_le_bytes(take(data, &mut o, 4)?.try_into().ok()?) as usize;
-    let mut records = Vec::with_capacity(rec_count.min(1 << 20));
+    let rec_count = u32::from_le_bytes(array(&mut r)?) as usize;
+    // Payload bytes alone do not bound a list of tiny records. Charge 32 bytes
+    // per slot (the i32/Vec tuple on 64-bit), fixed across targets so native and
+    // wasm readers accept the same slices. Keep the existing initial allowance.
+    if rec_count > (max_record_bytes / 32).max(1 << 12) {
+        return None;
+    }
+    // The count is the sender's word: grow as records arrive, not ahead.
+    let mut records = Vec::with_capacity(rec_count.min(1 << 12));
+    let mut total = 0usize;
     for _ in 0..rec_count {
-        let dt = i32::from_le_bytes(take(data, &mut o, 4)?.try_into().ok()?);
-        let len = u16::from_le_bytes(take(data, &mut o, 2)?.try_into().ok()?) as usize;
-        let record = take(data, &mut o, len)?;
-        let record = if version == 1 { upgrade_v1_record(record) } else { record.to_vec() };
+        let dt = i32::from_le_bytes(array(&mut r)?);
+        let record = if version >= 3 {
+            let kind = array::<1>(&mut r)?[0];
+            let len = u32::from_le_bytes(array(&mut r)?) as usize;
+            if len > max_record_bytes {
+                return None;
+            }
+            let stored = bytes(&mut r, len)?;
+            match kind {
+                RECORD_PACKET => stored,
+                RECORD_BUNDLE => rewrap_bundle(&stored)?,
+                _ => return None,
+            }
+        } else {
+            let len = u16::from_le_bytes(array(&mut r)?) as usize;
+            let record = bytes(&mut r, len)?;
+            if version == 1 { upgrade_v1_record(&record) } else { record }
+        };
+        // No capture is empty: a run of empty records would cost nothing
+        // against the cap while the list grows without end (#131).
+        if record.is_empty() {
+            return None;
+        }
+        total = total.checked_add(record.len())?;
+        if total > max_record_bytes {
+            return None;
+        }
         records.push((dt, record));
     }
     Some((records, blind_map))
@@ -986,6 +1483,9 @@ fn upgrade_v1_record(record: &[u8]) -> Vec<u8> {
                 break;
             }
             let body = &buf[o + n..o + size];
+            if bundle && top {
+                framing::new_read();
+            }
             let rewritten = match bundle {
                 true if depth < MAX_BUNDLE_DEPTH => framing::decompress_bundle(body)
                     .and_then(|inner| reframe(&inner, false, depth + 1))
@@ -1007,6 +1507,10 @@ fn upgrade_v1_record(record: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    /// A fixed key, so tests see the same tokens every run.
+    const KEY: SliceKey = [7; 32];
 
     fn host_with(records_at: &[usize], len: usize) -> Vec<u8> {
         // A non-allowlisted host: <len> 0x99 0x36 ... with `04 38` at the given offsets.
@@ -1097,7 +1601,7 @@ mod tests {
         body.resize(304, 0x00);
         let mut packet = frame_packet(&body).unwrap();
         assert_eq!(packet[1], 0x02, "a length ending in 02");
-        let mut blinder = Blinder::new(&[]);
+        let mut blinder = Blinder::new(KEY, &[]);
         blinder.blind(&mut packet);
         assert_eq!(&packet[2..7], &[0x40, 0x36, 0xc9, 0x8f, 0x07]);
 
@@ -1114,7 +1618,7 @@ mod tests {
         let mut body = vec![0x45, 0x36, 0x05, 0x00, 0x02, b'M', b'7', 0x00];
         body.resize(32, 0x00);
         let mut packet = frame_packet(&body).unwrap();
-        Blinder::new(&[]).blind(&mut packet);
+        Blinder::new(KEY, &[]).blind(&mut packet);
         assert!(!packet.windows(2).any(|w| w == b"M7"));
     }
 
@@ -1125,7 +1629,7 @@ mod tests {
         let mut body = vec![0x04, 0x38, 0xfe, 0x9e, 0x02, 0x04, 0x00, 0x9e, 0x9b, 0x01, 0x02, 0xd3, 0x86, 0x01, 0x00];
         body.resize(40, 0x00);
         let mut packet = frame_packet(&body).unwrap();
-        Blinder::new(&[]).blind(&mut packet);
+        Blinder::new(KEY, &[]).blind(&mut packet);
         assert!(packet.windows(4).any(|w| w == [0xd3, 0x86, 0x01, 0x00]));
     }
 
@@ -1135,7 +1639,7 @@ mod tests {
         let mut body = vec![0x44, 0x36, 0x9e, 0x9b, 0x01, 0x03, 0xe3, 0x81, 0x82];
         body.resize(40, 0x00);
         let mut packet = frame_packet(&body).unwrap();
-        Blinder::new(&[]).blind(&mut packet);
+        Blinder::new(KEY, &[]).blind(&mut packet);
         assert!(!packet.windows(3).any(|w| w == [0xe3, 0x81, 0x82]));
     }
 
@@ -1146,7 +1650,7 @@ mod tests {
         let mut body = vec![0x04, 0x38, 0xfe, 0x9e, 0x02, 0x04, 0x00, 0x95, 0xfa, 0x02, 0x50, 0x77, 0xf6, 0x00];
         body.resize(40, 0x00);
         let mut packet = frame_packet(&body).unwrap();
-        Blinder::new(&[]).blind(&mut packet);
+        Blinder::new(KEY, &[]).blind(&mut packet);
         assert!(packet.windows(4).any(|w| w == [0x50, 0x77, 0xf6, 0x00]));
     }
 
@@ -1156,7 +1660,7 @@ mod tests {
         let mut body = vec![0x04, 0x38, 0xfe, 0x9e, 0x02, 0x04, 0x00, 0x9e, 0x9b, 0x01, 0x02, 0x51, 0x28, 0xf4, 0x00];
         body.resize(40, 0x00);
         let mut packet = frame_packet(&body).unwrap();
-        Blinder::new(&[]).blind(&mut packet);
+        Blinder::new(KEY, &[]).blind(&mut packet);
         assert!(packet.windows(4).any(|w| w == [0x51, 0x28, 0xf4, 0x00]));
     }
 
@@ -1170,7 +1674,7 @@ mod tests {
         let mut packet = frame_packet(&body).unwrap();
         let before = packet.clone();
         let name = "8D".to_string();
-        Blinder::new(&[(&name, &0)]).blind(&mut packet);
+        Blinder::new(KEY, &[(&name, &0)]).blind(&mut packet);
         assert!(!packet.windows(2).any(|w| w == b"8D"));
         // Still blinded, and nothing but the run changed.
         let at = before.windows(3).position(|w| w == [0xde, 0x02, 0x0c]).unwrap() + 3;
@@ -1186,6 +1690,279 @@ mod tests {
         assert!(!is_allowed(&damage, Keep::State));
         assert!(is_allowed(&damage, Keep::All));
         assert!(is_allowed(&spawn, Keep::State));
+    }
+
+    #[test]
+    fn the_prelude_carries_no_buff_changes() {
+        for op in PRELUDE_SKIPPED {
+            let buff = frame_packet(&[op[0], op[1], 0x01, 0x02, 0x03]).unwrap();
+            assert!(!is_allowed(&buff, Keep::State));
+            assert!(is_allowed(&buff, Keep::All));
+        }
+    }
+
+    fn hex(s: &str) -> Vec<u8> {
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    }
+
+    /// A mob spawn from a capture (2026-10-06 18:12:55): its length is
+    /// `8f 01`, so its frame starts `8f 01 41 36`, the bytes a one-letter
+    /// name "A" has after its length byte.
+    fn spawn_after_8f_01() -> Vec<u8> {
+        hex(concat!(
+            "8f014136efb4031c000064902c0000026b519247339aa5c700540a4600d78b3fc7000107076400000064",
+            "000000000000000000000000000000000000006400000064000000010000000000000000000000000000",
+            "00000000000601110181969800ffffffffffffffff8075d52abb030000efb40301026b519247339aa5c7",
+            "00540a46063ed40000002900000000",
+        ))
+    }
+
+    /// Frame a record whose body is under 124 bytes: one length byte.
+    fn small_frame(body: &str) -> Vec<u8> {
+        let packet = frame_packet(&hex(body)).unwrap();
+        assert!(packet.len() < 128);
+        packet
+    }
+
+    /// Each record, and where its names are. The bodies are records the
+    /// parser reads, with made-up names: a self record ("Xy"), a player
+    /// spawn ("A"), a spawn naming its caster ("B"), a summon owner record
+    /// ("Cd"), a party roster ("Ef"), and the spawn above.
+    fn records_with_names() -> Vec<(Vec<u8>, Vec<std::ops::Range<usize>>)> {
+        vec![
+            (small_frame("3336ed745e91c1283702587918051e000000011c000000"), vec![11..13]),
+            (small_frame("4536d74800000000070141000000000000000000"), vec![11..12]),
+            (small_frame("4136c391031c0001014264902c0000026b5192473300"), vec![10..11]),
+            (small_frame("048dece6027228e900ae0b19050243640001000000"), vec![15..17]),
+            (
+                small_frame(concat!(
+                    "029701000000012e0600000000000000000000000000000000000101010100000000001905",
+                    "0245661e0000002d0000006400000019050000000102030000000000000000",
+                )),
+                vec![39..41],
+            ),
+            (spawn_after_8f_01(), vec![]),
+        ]
+    }
+
+    fn slice_of(packets: &[Vec<u8>], names: &NameMap) -> EvidenceSlice {
+        let at = CapturedPacket { captured_at_ms: 0, stream: "Client:1".into(), bytes: packets.concat() };
+        build(&[at], 0, 10, names, KEY).unwrap()
+    }
+
+    /// `blinded` is `source` but for its names: the name fields given, and
+    /// the runs a blinder that knows no names changes (text shaped like a
+    /// name, which the log service also counts as one).
+    fn only_names_changed(source: &[u8], blinded: &[u8], fields: &[std::ops::Range<usize>]) {
+        assert_eq!(blinded.len(), source.len());
+        let mut shaped = source.to_vec();
+        Blinder::new(KEY, &[]).blind_name_shaped(&mut shaped);
+        for (i, (b, s)) in blinded.iter().zip(source).enumerate() {
+            if !fields.iter().any(|f| f.contains(&i)) && shaped[i] == *s {
+                assert_eq!(b, s, "byte {i} of {source:02x?}");
+            }
+        }
+        for field in fields {
+            assert_ne!(blinded[field.clone()], source[field.clone()], "a name was left in {source:02x?}");
+        }
+    }
+
+    #[test]
+    fn a_one_letter_name_is_blinded_where_its_record_holds_it() {
+        // A player named "A" (a one-letter name is allowed), then the spawn
+        // whose frame starts `8f 01 41 36`.
+        let player = small_frame("4536d74800000000070141000000000000000000");
+        let spawn = spawn_after_8f_01();
+        let mut names = NameMap::new();
+        names.insert("A".into(), 0);
+        let slice = slice_of(&[player.clone(), spawn.clone()], &names);
+        assert_eq!(slice.records.len(), 2);
+        only_names_changed(&player, &slice.records[0].1, &[11..12]);
+        only_names_changed(&spawn, &slice.records[1].1, &[]);
+        let token = slice.records[0].1[11];
+        assert!(token.is_ascii_alphabetic(), "{token:02x}");
+        assert!(slice.blind_map.contains_key(&(token as char).to_string()));
+
+        // The slice still names the player and still spawns the mob.
+        let storage = Arc::new(crate::combat::data_storage::DataStorage::new());
+        let mut processor = crate::capture::stream_processor::StreamProcessor::new(
+            storage.clone(),
+            Arc::new(crate::i18n::lookup::SkillLookup::new()),
+            Arc::new(crate::i18n::lookup::NpcLookup::new()),
+        );
+        for (_, record) in &slice.records {
+            processor.consume_stream(record);
+        }
+        assert_eq!(storage.get_nickname(9303), Some((token as char).to_string()));
+        assert_eq!(storage.mob_code(55919), Some(2_920_548));
+
+        // A one-letter name is a leak in a name field, and nowhere else: the
+        // spawn's `01 41` is no leak.
+        assert_eq!(leaked_names(&[(0, player)], &["A".to_string()]), 1);
+        assert_eq!(leaked_names(&[(0, spawn)], &["A".to_string()]), 0);
+    }
+
+    #[test]
+    fn blinding_changes_nothing_but_the_names() {
+        let records = records_with_names();
+        let mut names = NameMap::new();
+        names.insert("Xy".into(), 7);
+        names.insert("A".into(), 0);
+        names.insert("Ef".into(), 0x0519_0000_0000_0001);
+        // "B" and "Cd" are names the meter never resolved.
+        let packets: Vec<Vec<u8>> = records.iter().map(|(p, _)| p.clone()).collect();
+        let slice = slice_of(&packets, &names);
+        assert_eq!(slice.records.len(), records.len());
+        for ((_, blinded), (source, fields)) in slice.records.iter().zip(&records) {
+            only_names_changed(source, blinded, fields);
+        }
+    }
+
+    #[test]
+    fn a_known_two_letter_name_is_only_blinded_where_the_game_puts_a_name() {
+        // "Jo" by chance in a record's data stays; after its length byte it goes.
+        let name = "Jo".to_string();
+        let mut chance = frame_packet(&[0x41, 0x36, 0x9e, 0x9b, 0x01, 0x10, b'J', b'o', 0x22, 0x00, 0x00]).unwrap();
+        let before = chance.clone();
+        Blinder::new(KEY, &[(&name, &0)]).blind_known(&mut chance);
+        assert_eq!(chance, before);
+        let mut named = frame_packet(&[0x41, 0x36, 0x9e, 0x9b, 0x01, 0x02, b'J', b'o', 0x22, 0x00, 0x00]).unwrap();
+        Blinder::new(KEY, &[(&name, &0)]).blind_known(&mut named);
+        assert!(!named.windows(2).any(|w| w == b"Jo"));
+    }
+
+    /// A reconnect from the same server port. The old connection's last
+    /// packet never finished; the new connection's bytes, appended to it in one
+    /// stream, were read as its tail, and every slice after came out as lifted
+    /// fragments or not at all (2026-10-07: 98 % lifted from 08:05, then no
+    /// slices). One stream per connection keeps the new one whole.
+    /// The names found in one pass give what looking for each in turn gave:
+    /// the same bytes blinded, and the same answer to "does a known name
+    /// overlap here?". Names that contain each other, and a small alphabet so
+    /// they turn up often and next to each other.
+    #[test]
+    fn one_pass_over_the_names_blinds_as_one_name_at_a_time_did() {
+        fn one_at_a_time(known: &[(Vec<u8>, Vec<u8>)], buf: &mut [u8]) -> usize {
+            let mut replaced = 0;
+            for (needle, token) in known {
+                let short = needle.len() < SHORT_NAME_BYTES;
+                let mut i = 0;
+                while i + needle.len() <= buf.len() {
+                    if &buf[i..i + needle.len()] == needle.as_slice()
+                        && (!short || (i > 0 && buf[i - 1] as usize == needle.len()))
+                    {
+                        buf[i..i + needle.len()].copy_from_slice(token);
+                        replaced += 1;
+                        i += needle.len();
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            replaced
+        }
+        fn overlaps(known: &[(Vec<u8>, Vec<u8>)], buf: &[u8], from: usize, to: usize) -> bool {
+            known.iter().any(|(name, _)| {
+                let n = name.len();
+                let start = (from + 1).saturating_sub(n);
+                let end = (to + n - 1).min(buf.len());
+                end >= start + n && buf[start..end].windows(n).any(|w| w == name.as_slice())
+            })
+        }
+        let names: Vec<String> = ["Misti", "Mistifix", "ab", "abc", "bca", "cab", "abcab", "ba", "c2", "Nyx"]
+            .iter().map(|n| n.to_string()).collect();
+        let ids: Vec<u64> = (0..names.len() as u64).collect();
+        let mut ordered: Vec<(&String, &u64)> = names.iter().zip(ids.iter()).collect();
+        ordered.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(b.0)));
+        let blinder = Blinder::new(KEY, &ordered);
+        assert!(blinder.finder.is_some());
+
+        // Names, parts of names and length bytes, run together.
+        let pieces: [&[u8]; 14] = [b"Misti", b"fix", b"ab", b"c", b"a", b"b", b"Mist", b"Nyx", b"2", b"\x02", b"\x03", b"\x05", b"\x08", b"z"];
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let (mut blinded, mut overlapping) = (0, 0);
+        for _ in 0..3000 {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let buf: Vec<u8> = (0..1 + seed % 10).flat_map(|i| pieces[(seed >> (i * 5)) as usize % pieces.len()].iter().copied()).collect();
+            let len = buf.len();
+
+            let mut expected = buf.clone();
+            let mut got = buf.clone();
+            let replaced = blinder.blind_known(&mut got);
+            assert_eq!(replaced, one_at_a_time(&blinder.known, &mut expected), "{buf:?}");
+            blinded += replaced;
+            assert_eq!(got, expected, "{buf:?}");
+
+            let from = (seed >> 8) as usize % len;
+            let to = (from + 1 + (seed >> 16) as usize % 6).min(len);
+            let spells = blinder.spells_known_name(&buf, from, to);
+            assert_eq!(spells, overlaps(&blinder.known, &buf, from, to), "{buf:?} {from}..{to}");
+            overlapping += spells as usize;
+        }
+        assert!(blinded > 300 && overlapping > 300, "too few names to compare: {blinded} blinded, {overlapping} overlapping");
+    }
+
+    #[test]
+    fn a_short_name_is_only_a_leak_where_the_game_puts_a_name() {
+        // "Jo" by chance inside other data is not a leak; after its length byte it is.
+        assert!(!name_in(&[0x10, b'J', b'o', 0x22, 0x01], b"Jo"));
+        assert!(name_in(&[0x10, 0x02, b'J', b'o', 0x22], b"Jo"));
+        // A longer name counts anywhere.
+        assert!(name_in(&[0x00, b'M', b'i', b's', b't', b'i', 0x00], b"Misti"));
+        assert!(!name_in(&[0x00, b'M', b'i', b's', b't', 0x00], b"Misti"));
+        let records = vec![(0, vec![0x05, 0x10, b'J', b'o', 0x22, 0x01])];
+        assert_eq!(leaked_names(&records, &["Jo".to_string()]), 0);
+    }
+
+    #[test]
+    fn a_reconnect_on_the_same_server_port_starts_a_clean_stream() {
+        use crate::capture::captured_payload::stream_key;
+        let world = hex("34213601000000f2030000dd7f3c00000000006868d047d0c62c470098da46fa63284300000000000000000000004f0000");
+        let at = |ms, stream: String, bytes: Vec<u8>| CapturedPacket { captured_at_ms: ms, stream, bytes };
+        let cut = |old: String, new: String| {
+            let packets = vec![
+                at(100_000, old.clone(), world.clone()),
+                at(100_000, old, world[..10].to_vec()),
+                at(101_000, new.clone(), world.clone()),
+                at(101_000, new, world.clone()),
+            ];
+            build(&packets, 100_000, 110_000, &HashMap::new(), KEY).map(|s| s.records.len()).unwrap_or(0)
+        };
+        assert_eq!(cut(stream_key(7777, 50000), stream_key(7777, 50001)), 3, "every whole packet kept");
+        assert!(cut("Client:7777".into(), "Client:7777".into()) < 3, "one stream per server port loses the new connection");
+    }
+
+    #[test]
+    fn map_loads_are_kept_without_their_text_and_party_scope_is_not() {
+        // Captured 2026-10-04: a party-scope record, a load into World_L_A
+        // (1010), and a load naming a cutscene.
+        let scope = hex("0f0638eab601b26c18000c00");
+        let world = hex("34213601000000f2030000dd7f3c00000000006868d047d0c62c470098da46fa63284300000000000000000000004f0000");
+        let cutscene = hex("492136030000009b8a01001d8a01000000000006bfcd47aaa3904700482c46069fb6c2020000000000000000000039154375747363656e655f4c5f415f5365715f3131353100");
+        let at = |ms, bytes: &Vec<u8>| CapturedPacket { captured_at_ms: ms, stream: "Client:1".into(), bytes: bytes.clone() };
+        // The first two in the prelude, the rest in the fight window.
+        let packets = vec![at(0, &scope), at(0, &world), at(100_000, &cutscene), at(100_000, &scope)];
+        let slice = build(&packets, 100_000, 110_000, &HashMap::new(), KEY).unwrap();
+        // Party scope only feeds the loot owner, which a derivation never
+        // reads, and it made slices 30-50 % larger (2026-10-07, three bosses).
+        assert_eq!(slice.records.len(), 2);
+        let kept: Vec<u8> = slice.records.iter().flat_map(|(_, r)| r.clone()).collect();
+        assert!(kept.windows(4).any(|w| w == [0x9b, 0x8a, 0x01, 0x00]), "the map id survives");
+        assert!(!kept.windows(8).any(|w| w == b"Cutscene"), "the text does not");
+
+        let storage = Arc::new(crate::combat::data_storage::DataStorage::new());
+        let mut processor = crate::capture::stream_processor::StreamProcessor::new(
+            storage.clone(),
+            Arc::new(crate::i18n::lookup::SkillLookup::new()),
+            Arc::new(crate::i18n::lookup::NpcLookup::new()),
+        );
+        storage.set_current_dungeon(600021);
+        for (_, record) in &slice.records[..2] {
+            processor.consume_stream(record);
+        }
+        assert_eq!(storage.current_dungeon_id(), 0, "the replay saw the load into the open world");
     }
 
     fn framed(payload: &[u8]) -> Vec<u8> {
@@ -1215,7 +1992,7 @@ mod tests {
     #[test]
     fn the_server_finds_names_a_client_left_in_the_clear() {
         // A slice cut by this meter: nothing left to blind.
-        let slice = build(&[cap(500, &spawn_named("Grandine")[1..])], 0, 1_000, &HashMap::new()).unwrap();
+        let slice = build(&[cap(500, &spawn_named("Grandine")[1..])], 0, 1_000, &HashMap::new(), KEY).unwrap();
         assert_eq!(unblinded_names(&slice.records, &slice.blind_map), 0);
         assert_eq!(leaked_names(&slice.records, &["Grandine".to_string()]), 0);
 
@@ -1225,24 +2002,201 @@ mod tests {
         assert_eq!(leaked_names(&raw, &["Grandine".to_string(), "Misti".to_string()]), 1);
     }
 
+    /// `leaked_names` as it was: each name looked for in turn.
+    fn leaked_names_one_at_a_time(records: &[(i32, Vec<u8>)], names: &[String]) -> usize {
+        let plaintext: Vec<Vec<u8>> = records.iter().map(|(_, p)| expand(p)).collect();
+        let fields = name_field_contents(records);
+        names
+            .iter()
+            .map(|n| n.as_bytes())
+            .filter(|n| !n.is_empty())
+            .filter(|n| fields.contains(*n) || plaintext.iter().any(|buf| name_in(buf, n)))
+            .count()
+    }
+
+    /// A token field read one byte early is no name: `09`, then the field's
+    /// own length (`21`, "!") and the token's first bytes read as
+    /// "!f819387e". 4,700 uploads a day were refused for it (2026-10-30,
+    /// `45 36` and `41 36`). A real name in the same packet is still found.
+    /// A guest upload's names are masked; one that short matches ordinary
+    /// bytes by chance, and none can leak a name.
+    #[test]
+    fn masked_names_are_not_looked_for() {
+        let record = vec![0x05, 0x10, 0x02, b'A', b'*', 0x00];
+        assert_eq!(leaked_names(&[(0, record)], &["A*".to_string(), "Na***a".to_string()]), 0);
+    }
+
+    #[test]
+    fn a_token_field_read_one_byte_early_is_no_name() {
+        let token = "f819387e548f0c2a77d1e93b5a40c6d81";
+        let mut body = vec![0, 0, 0, 0, 0xc6, 0x09, token.len() as u8];
+        body.extend_from_slice(token.as_bytes());
+        body.extend_from_slice(&[0, 0, 5]);
+        body.extend_from_slice(b"Alice");
+        let mut packet = Vec::new();
+        let total = body.len() + 2 + 1;
+        packet.push(total as u8);
+        packet.extend_from_slice(&[0x45, 0x36]);
+        packet.extend_from_slice(&body);
+        let mut blinder = Blinder::exempting(HashSet::from([token.as_bytes().to_vec()]));
+        assert_eq!(blinder.blind_name_shaped(&mut packet), 1, "Alice, and only Alice");
+        assert!(packet.windows(token.len()).any(|w| w == token.as_bytes()), "the token is left whole");
+    }
+
+    #[test]
+    fn one_pass_over_the_names_counts_leaks_as_one_name_at_a_time_did() {
+        let named: Vec<Vec<u8>> = records_with_names().into_iter().map(|(r, _)| r).collect();
+        let mut records: Vec<(i32, Vec<u8>)> = named.iter().cloned().map(|r| (0, r)).collect();
+        records.push((5, spawn_named("Grandine")));
+        records.push((6, spawn_after_8f_01()));
+        records.push((7, vec![0x05, 0x10, b'J', b'o', 0x22, 0x01]));
+        // The named records again inside a bundle, a name across two packets too.
+        let inner: Vec<u8> = named.concat().into_iter().chain(spawn_named("Misti")).collect();
+        records.push((8, rewrap_bundle(&inner).unwrap()));
+        let lists: Vec<Vec<&str>> = vec![
+            vec![],
+            vec![""],
+            vec!["Nobody", "Q", "ab"],
+            vec!["Xy", "A", "B", "Cd", "Ef", "Grandine", "Misti", "Jo", "", "Grandine", "Q", "Zz", "Nobody"],
+            vec!["Misti", "Misti", "Mist", "isti", "A"],
+        ];
+        for list in lists {
+            let names: Vec<String> = list.iter().map(|s| s.to_string()).collect();
+            for upto in [1, 6, records.len()] {
+                let records = &records[..upto];
+                assert_eq!(leaked_names(records, &names), leaked_names_one_at_a_time(records, &names), "{list:?} {upto}");
+            }
+        }
+        let all = ["Xy", "A", "B", "Cd", "Ef", "Grandine", "Misti"].map(String::from);
+        assert!(leaked_names(&records, &all) > 0);
+    }
+
+    /// The same, over real slices: `A2ES_SLICES=<dir> cargo test -- --ignored`.
+    /// Names are each slice's own tokens, which are in it, and some that are not.
+    #[test]
+    #[ignore]
+    fn one_pass_over_the_names_counts_leaks_as_one_name_at_a_time_did_on_real_slices() {
+        use std::io::Read;
+        let Ok(dir) = std::env::var("A2ES_SLICES") else { return };
+        let mut paths: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).collect();
+        paths.sort();
+        let limit = std::env::var("A2ES_LIMIT").ok().and_then(|s| s.parse().ok()).unwrap_or(25);
+        let (mut checked, mut found) = (0, 0);
+        for path in paths.into_iter().take(limit) {
+            let body = std::fs::read(&path).unwrap();
+            let mut raw = Vec::new();
+            let read = if body.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]) {
+                zstd::stream::read::Decoder::new(&body[..]).and_then(|mut d| d.read_to_end(&mut raw))
+            } else {
+                flate2::read::GzDecoder::new(&body[..]).read_to_end(&mut raw)
+            };
+            let Some((records, blind_map)) = read.ok().and_then(|_| decode(&raw)) else { continue };
+            let mut names: Vec<String> = blind_map.keys().take(40).cloned().collect();
+            names.extend(["Nobody", "ab", "Q", "Plyr0042"].map(String::from));
+            let count = leaked_names(&records, &names);
+            assert_eq!(count, leaked_names_one_at_a_time(&records, &names), "{path:?}");
+            (checked, found) = (checked + 1, found + count);
+        }
+        eprintln!("{checked} slices, {found} names found in them");
+    }
+
     #[test]
     fn token_is_always_the_same_byte_length() {
         for name in ["Misti", "丨Mamepoko丨", "九州依然在", "a", "Grandine"] {
-            let t = token_for(name, 0x03f6_0000_0001_4b85, name.len());
+            let t = token_for(&KEY, name, 0x03f6_0000_0001_4b85, name.len());
             assert_eq!(t.len(), name.len(), "{name}");
             assert!(t.is_ascii());
         }
     }
 
     #[test]
+    fn a_blinded_self_record_still_identifies_the_current_server() {
+        // Synthetic Xy self record: entity 14957, current server 1304.
+        // This key/id pair previously minted the numeric-only token "67".
+        let source = small_frame("3336ed745e91c1283702587918051e000000011c000000");
+        let replay = |data: &[u8]| {
+            let storage = Arc::new(crate::combat::data_storage::DataStorage::new());
+            let mut processor = crate::capture::stream_processor::StreamProcessor::new(
+                storage.clone(),
+                Arc::new(crate::i18n::lookup::SkillLookup::new()),
+                Arc::new(crate::i18n::lookup::NpcLookup::new()),
+            );
+            processor.consume_stream(data);
+            storage
+        };
+        assert_eq!(replay(&source).self_record_server(), 1304);
+        let names = NameMap::from([("Xy".to_string(), 7)]);
+        let slice = slice_of(&[source.clone()], &names);
+        let token = slice.blind_map.iter().find(|(_, id)| **id == 7).unwrap().0;
+        assert_eq!(token.len(), 2);
+        only_names_changed(&source, &slice.records[0].1, &[11..13]);
+        assert_eq!(unblinded_names(&slice.records, &slice.blind_map), 0);
+        let (records, blind_map) = decode(&encode(&slice)).unwrap();
+        assert_eq!(blind_map, slice.blind_map);
+        let storage = replay(&records[0].1);
+        assert_eq!(storage.self_record_server(), 1304, "blind token={token}");
+        assert_eq!(storage.local_player_id(), Some(14957));
+        assert_eq!(storage.stated_server(token), Some(1304));
+    }
+
+    #[test]
+    fn tokens_keep_a_letter_without_shrinking_the_short_token_space() {
+        for len in 2..=12 {
+            for id in 0..128 {
+                let token = token_for(&KEY, "Xy", id, len);
+                assert_eq!(token.len(), len);
+                assert!(token.bytes().all(|b| b.is_ascii_alphanumeric()));
+                assert!(token.bytes().any(|b| b.is_ascii_alphabetic()));
+            }
+        }
+        // These ids cover all 256 two-character hex prefixes. Numeric tokens
+        // must retain all 256 distinct possibilities, not fold them into a-f.
+        let tokens: HashSet<_> = (0..4096).map(|id| token_for(&KEY, "Xy", id, 2)).collect();
+        assert_eq!(tokens.len(), 256);
+        assert!(token_for(&KEY, "", 0, 0).is_empty());
+    }
+
+    #[test]
     fn token_is_stable_per_roster_id_not_per_name() {
-        let a = token_for("Misti", 7, 5);
-        let b = token_for("Other", 7, 5);
+        let a = token_for(&KEY, "Misti", 7, 5);
+        let b = token_for(&KEY, "Other", 7, 5);
         assert_eq!(
             a, b,
             "same dbid must blind to the same token regardless of name"
         );
-        assert_ne!(a, token_for("Misti", 8, 5));
+        assert_ne!(a, token_for(&KEY, "Misti", 8, 5));
+    }
+
+    #[test]
+    fn another_key_gives_other_tokens() {
+        let other: SliceKey = [8; 32];
+        assert_ne!(token_for(&KEY, "Velkora", 0, 7), token_for(&other, "Velkora", 0, 7));
+        assert_ne!(token_for(&KEY, "Velkora", 7, 7), token_for(&other, "Velkora", 7, 7));
+
+        let mut payload = vec![0x45, 0x36, 0x07];
+        payload.extend_from_slice(b"Velkora");
+        let mut names = NameMap::new();
+        names.insert("Velkora".into(), 42);
+        let a = build(&[cap(0, &payload)], 0, 10, &names, KEY).unwrap();
+        let b = build(&[cap(0, &payload)], 0, 10, &names, other).unwrap();
+        assert_ne!(a.blind_map.keys().collect::<Vec<_>>(), b.blind_map.keys().collect::<Vec<_>>());
+        assert_ne!(encode(&a), encode(&b));
+    }
+
+    #[test]
+    fn a_name_gets_one_token_throughout_a_slice() {
+        let mut payload = vec![0x45, 0x36, 0x07];
+        payload.extend_from_slice(b"Velkora");
+        let mut names = NameMap::new();
+        names.insert("Velkora".into(), 42);
+        let slice = build(&[cap(0, &payload), cap(5, &payload)], 0, 10, &names, KEY).unwrap();
+
+        assert_eq!(slice.blind_map.len(), 1);
+        let token = slice.blind_map.keys().next().unwrap().as_bytes();
+        assert_eq!(slice.records.len(), 2);
+        for (_, record) in &slice.records {
+            assert!(record.windows(token.len()).any(|w| w == token));
+        }
     }
 
     #[test]
@@ -1251,7 +2205,7 @@ mod tests {
             cap(1_000, &[0x04, 0x38, 0x01, 0x02]),
             cap(1_000, &[0xAB, 0xCD, b'c', b'h', b'a', b't']),
         ];
-        let slice = build(&packets, 1_000, 2_000, &HashMap::new()).unwrap();
+        let slice = build(&packets, 1_000, 2_000, &HashMap::new(), KEY).unwrap();
         assert_eq!(slice.records.len(), 1);
         assert_eq!(slice.stats.packets_seen, 2);
         assert_eq!(slice.stats.packets_kept, 1);
@@ -1265,7 +2219,7 @@ mod tests {
 
         let mut names = NameMap::new();
         names.insert("Misti".into(), 42);
-        let slice = build(&[cap(0, &payload)], 0, 10, &names).unwrap();
+        let slice = build(&[cap(0, &payload)], 0, 10, &names, KEY).unwrap();
 
         assert_eq!(slice.records.len(), 1);
         assert_eq!(
@@ -1289,7 +2243,7 @@ mod tests {
         names.insert("Misti".into(), 1);
         names.insert("Mistifix2".into(), 2);
 
-        let slice = build(&[cap(0, &payload)], 0, 10, &names).unwrap();
+        let slice = build(&[cap(0, &payload)], 0, 10, &names, KEY).unwrap();
         let out = &slice.records[0].1;
         assert!(!out.windows(9).any(|w| w == b"Mistifix2"));
         assert!(!out.windows(5).any(|w| w == b"Misti"));
@@ -1302,7 +2256,7 @@ mod tests {
         let mut names = NameMap::new();
         names.insert("九州依然在".into(), 3);
 
-        let slice = build(&[cap(0, &payload)], 0, 10, &names).unwrap();
+        let slice = build(&[cap(0, &payload)], 0, 10, &names, KEY).unwrap();
         let out = &slice.records[0].1;
         assert!(!out
             .windows("九州依然在".len())
@@ -1321,8 +2275,36 @@ mod tests {
             cap(100_000, &payload),                  // during
             cap(200_000 + TAIL_MS + 1, &payload),    // past the tail
         ];
-        let slice = build(&packets, 100_000, 200_000, &HashMap::new()).unwrap();
+        let slice = build(&packets, 100_000, 200_000, &HashMap::new(), KEY).unwrap();
         assert_eq!(slice.records.len(), 2);
+    }
+
+    /// The dungeon reaches the slice: a map load and roster from long before
+    /// the prelude come first, other old state stays out, and one inside the
+    /// window leaves the older of its kind out.
+    #[test]
+    fn the_latest_map_load_and_roster_come_however_old() {
+        let start = 50 * 60_000;
+        let map = [0x21, 0x36, 0x01];
+        let roster = [0x02, 0x97, 0x05];
+        let spawn = [0x41, 0x36, 0x07];
+        let hit = [0x04, 0x38, 0x01];
+        let packets = vec![
+            cap(1_000, &map),
+            cap(2_000, &roster),
+            cap(3_000, &spawn),
+            cap(start, &hit),
+        ];
+        let slice = build(&packets, start, start + 10_000, &HashMap::new(), KEY).unwrap();
+        let ops: Vec<Option<[u8; 2]>> = slice.records.iter().map(|(_, p)| whereabouts_opcode(p)).collect();
+        assert_eq!(ops, vec![Some([0x21, 0x36]), Some([0x02, 0x97]), None]);
+        assert_eq!(slice.records[0].0, (1_000 - start) as i32);
+
+        let mut later = packets.clone();
+        later.insert(3, cap(start - 1_000, &map));
+        let slice = build(&later, start, start + 10_000, &HashMap::new(), KEY).unwrap();
+        let maps = slice.records.iter().filter(|(_, p)| whereabouts_opcode(p) == Some([0x21, 0x36])).count();
+        assert_eq!(maps, 1);
     }
 
     #[test]
@@ -1333,6 +2315,7 @@ mod tests {
             1_700_000_000_000,
             1_700_000_010_000,
             &HashMap::new(),
+            KEY,
         )
         .unwrap();
         assert_eq!(slice.records[0].0, 5_000);
@@ -1345,7 +2328,7 @@ mod tests {
         let mut names = NameMap::new();
         names.insert("Grandine".into(), 0x03f5_0000_0001_b9c0);
 
-        let slice = build(&[cap(500, &payload)], 0, 1_000, &names).unwrap();
+        let slice = build(&[cap(500, &payload)], 0, 1_000, &names, KEY).unwrap();
         let bytes = encode(&slice);
         let (records, blind_map) = decode(&bytes).expect("decodes");
 
@@ -1366,8 +2349,8 @@ mod tests {
         let mut names = NameMap::new();
         names.insert("Misti".into(), 1);
         names.insert("Grandine".into(), 2);
-        let a = encode(&build(&[cap(0, &payload)], 0, 10, &names).unwrap());
-        let b = encode(&build(&[cap(0, &payload)], 0, 10, &names).unwrap());
+        let a = encode(&build(&[cap(0, &payload)], 0, 10, &names, KEY).unwrap());
+        let b = encode(&build(&[cap(0, &payload)], 0, 10, &names, KEY).unwrap());
         assert_eq!(a, b);
     }
 
@@ -1375,9 +2358,97 @@ mod tests {
     fn a_capture_with_nothing_in_the_window_is_an_error() {
         let packets = vec![cap(0, &[0x04, 0x38, 0x01])];
         assert!(matches!(
-            build(&packets, 10_000_000, 10_001_000, &HashMap::new()),
+            build(&packets, 10_000_000, 10_001_000, &HashMap::new(), KEY),
             Err(SliceError::Empty)
         ));
+    }
+
+    /// A slice in the version 1/2 layout (`u16 len`, no kind), as older
+    /// meters wrote it.
+    fn encode_legacy(slice: &EvidenceSlice, version: u16) -> Vec<u8> {
+        let current = encode(&EvidenceSlice { records: Vec::new(), blind_map: slice.blind_map.clone(), stats: SliceStats::default() });
+        let mut out = current[..current.len() - 4].to_vec();
+        out[4..6].copy_from_slice(&version.to_le_bytes());
+        out.extend_from_slice(&(slice.records.len() as u32).to_le_bytes());
+        for (dt, packet) in &slice.records {
+            out.extend_from_slice(&dt.to_le_bytes());
+            out.extend_from_slice(&(packet.len() as u16).to_le_bytes());
+            out.extend_from_slice(packet);
+        }
+        out
+    }
+
+    /// Version 3 stores a bundle unpacked and wraps it again on reading: the
+    /// records come back byte for byte, and a version 2 slice of the same
+    /// fight reads the same. The unpacked bundle is in the clear in the
+    /// slice, where the outer compression can reach it.
+    #[test]
+    fn a_streamed_slice_is_limited_by_its_records_alike_in_every_version() {
+        let bundle = rewrap_bundle(&[0x07, 0x00, 0x2A, 0x38, 1, 2, 3, 4]).expect("a bundle");
+        let records = vec![(0, vec![0x07, 0x00, 0x2B, 0x38, 9, 9, 9]), (5, bundle)];
+        let slice = EvidenceSlice { records: records.clone(), blind_map: HashMap::new(), stats: Default::default() };
+        let size: usize = records.iter().map(|(_, r)| r.len()).sum();
+        for bytes in [encode(&slice), encode_legacy(&slice, 2)] {
+            assert_eq!(decode_from(&bytes[..], size).map(|(r, _)| r), Some(records.clone()));
+            assert_eq!(decode_from(&bytes[..], size - 1), None);
+        }
+        // Cut short: no records invented, nothing read past the end.
+        let v3 = encode(&slice);
+        assert_eq!(decode_from(&v3[..v3.len() - 1], usize::MAX), None);
+    }
+
+    #[test]
+    fn tiny_records_also_have_a_metadata_limit() {
+        let mut slice = EvidenceSlice {
+            records: vec![(0, vec![0]); 4096],
+            blind_map: HashMap::new(), stats: Default::default(),
+        };
+        for version in 1..=VERSION {
+            let encode_version = |s: &EvidenceSlice| if version == VERSION { encode(s) } else { encode_legacy(s, version) };
+            let bytes = encode_version(&slice);
+            assert_eq!(decode_from(&bytes[..], 4096).unwrap().0, slice.records);
+
+            slice.records.push((0, vec![0]));
+            let bytes = encode_version(&slice);
+            // The payload fits; its growing list of allocations does not.
+            assert!(decode_from(&bytes[..], 4097).is_none());
+            // The allowance scales with the caller's byte budget, rather than
+            // imposing a fixed record count on larger historical captures.
+            assert_eq!(decode_from(&bytes[..], 4097 * 32).unwrap().0, slice.records);
+            slice.records.pop();
+        }
+    }
+
+    #[test]
+    fn an_excessive_record_count_stops_before_reading_records() {
+        let slice = EvidenceSlice { records: Vec::new(), blind_map: HashMap::new(), stats: Default::default() };
+        let mut bytes = encode(&slice);
+        let header_len = bytes.len();
+        bytes[header_len - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
+        bytes.extend_from_slice(&[0; 10]);
+        let mut reader = std::io::Cursor::new(bytes);
+        assert!(decode_from(&mut reader, 36 * 1024 * 1024).is_none());
+        assert_eq!(reader.position(), header_len as u64);
+    }
+
+    #[test]
+    fn a_version_3_slice_reads_back_the_records_it_was_given() {
+        let packet = frame_packet(&[0x04, 0x38, 0x01, 0x02, 0x03]).unwrap();
+        let inner: Vec<u8> = [frame_packet(&[0x41, 0x36, 0x05]).unwrap(), frame_packet(&[0x2B, 0x38, 9, 9, 9, 9]).unwrap()].concat();
+        let bundle = rewrap_bundle(&inner).unwrap();
+        let slice = EvidenceSlice {
+            records: vec![(0, packet.clone()), (40, bundle.clone()), (90, packet.clone())],
+            blind_map: HashMap::from([("@a".to_string(), 7u64)]),
+            stats: SliceStats::default(),
+        };
+        let bytes = encode(&slice);
+        assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 3);
+        assert!(bytes.windows(inner.len()).any(|w| w == inner.as_slice()), "the bundle is stored unpacked");
+        let (records, blind) = decode(&bytes).expect("decodes");
+        assert_eq!(records, slice.records);
+        assert_eq!(blind.get("@a"), Some(&7));
+        let (old, _) = decode(&encode_legacy(&slice, 2)).expect("a version 2 slice still decodes");
+        assert_eq!(old, records);
     }
 
     #[test]
@@ -1406,8 +2477,7 @@ mod tests {
             blind_map: HashMap::new(),
             stats: SliceStats::default(),
         };
-        let mut bytes = encode(&slice);
-        bytes[4..6].copy_from_slice(&1u16.to_le_bytes());
+        let bytes = encode_legacy(&slice, 1);
 
         let (records, _) = decode(&bytes).expect("a version 1 slice still decodes");
         let bodies: Vec<Vec<u8>> = records
@@ -1436,3 +2506,4 @@ mod tests {
         assert!(decode(&framed(&[0x04, 0x38, 0x01])).is_none());
     }
 }
+

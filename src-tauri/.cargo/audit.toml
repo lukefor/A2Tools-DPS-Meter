@@ -1,0 +1,8 @@
+# `cargo audit` exceptions, each one reviewed (#131).
+[advisories]
+ignore = [
+    # glib 0.18's VariantStrIter is unsound. GTK 3 (Tauri's Linux webview)
+    # holds glib at 0.18, and nothing here, in Tauri or in wry iterates a
+    # Variant's strings.
+    "RUSTSEC-2024-0429",
+]

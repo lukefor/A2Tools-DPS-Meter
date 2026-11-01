@@ -8,6 +8,14 @@ pub fn find_aion2_window() -> bool {
     false
 }
 
+/// Nothing to watch here.
+/// KDE only (see the Linux version): nothing here draws under the meter.
+pub fn watch_screenshot_tool(_on_change: impl Fn(bool) + Send + Sync + 'static) {}
+
+pub fn watch_focus(_on_change: impl Fn() + Send + Sync + 'static) -> Result<(), String> {
+    Ok(())
+}
+
 pub fn is_aion2_foreground() -> bool {
     false
 }

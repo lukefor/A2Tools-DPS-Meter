@@ -4,10 +4,43 @@
     "display": {
       "dps": "DPS",
       "total": "DMG",
+      "damageReceived": "피격",
       "ariaDps": "DPS 표시 중",
       "ariaDamage": "총 피해 표시 중",
-      "both": "둘 다",
-      "ariaBoth": "DPS와 총 피해 표시 중"
+      "ariaDamageReceived": "받은 피해 표시 중",
+      "hps": "HPS",
+      "totalHeal": "HEAL",
+      "stagger": "무력화",
+      "ariaHps": "초당 힐량 표시 중",
+      "ariaHeal": "총 힐량 표시 중",
+      "ariaStagger": "보스 무력화 게이지에 준 피해 표시",
+      "names": {
+        "dps": "초당 피해량",
+        "totalDamage": "총 피해량",
+        "damageReceived": "받은 피해량",
+        "hps": "초당 치유량",
+        "totalHeal": "총 치유량",
+        "stagger": "무력화",
+        "bossStagger": "보스 무력화 %",
+        "statColours": "항목별 색상",
+        "deaths": "사망 횟수"
+      },
+      "sortBy": "이 항목으로 정렬",
+      "menuTip": "행에 표시할 항목을 고릅니다. 휠 또는 우클릭: 다음 항목",
+      "bossStaggerTip": "보스 무력화 게이지가 얼마나 깎였는지 HP 바에 표시합니다",
+      "sortCol": "정렬",
+      "showCol": "표시",
+      "statColoursTip": "각 항목을 행, 메뉴, 버튼에 고유한 색으로 표시합니다"
+    },
+    "updates": {
+      "meter": "A2Tools DPS Meter {version} 업데이트가 있습니다",
+      "plugins": "플러그인 업데이트: {list}"
+    },
+    "targetMode": {
+      "lastHitByMe": "마지막으로 때린 적",
+      "bossTargets": "보스만",
+      "trainTargets": "훈련용 허수아비",
+      "allTargets": "모든 적 합산"
     }
   },
   "details": {
@@ -63,8 +96,18 @@
       "backTooltip": "백어택 %",
       "frontal": "정면",
       "frontalTooltip": "정면 공격 %",
-      "powershard": "샤드",
-      "powershardTooltip": "파워샤드 %",
+      "shieldBlock": "막기",
+      "shieldBlockTooltip": "방패 막기 %",
+      "perfectBlock": "완막",
+      "perfectBlockTooltip": "완벽 막기 %",
+      "ironWall": "철벽",
+      "ironWallTooltip": "철벽 %",
+      "regeneration": "재생",
+      "regenerationTooltip": "재생 %",
+      "miss": "빗나감",
+      "missTooltip": "빗나감",
+      "resist": "저항",
+      "resistTooltip": "저항",
       "regen": "회복",
       "regenTooltip": "흡혈 회복량",
       "multiHit": "MH%",
@@ -76,7 +119,18 @@
       "avgDmg": "평균",
       "avgDmgTooltip": "평균 피해",
       "maxDmg": "최대",
-      "maxDmgTooltip": "최대 피해"
+      "maxDmgTooltip": "최대 피해",
+      "heal": "치유",
+      "healTooltip": "치유량",
+      "healPct": "치유%",
+      "healPctTooltip": "치유량 %"
+    },
+    "peak": {
+      "label": "파티 목록",
+      "show": "평균 옆에 최고 DPS(최고 5초) 표시"
+    },
+    "party": {
+      "activeDps": "활동 시간 DPS: {dps} (전투 {total} 중 {active})"
     },
     "stats": {
       "totalDamage": "총 피해",
@@ -91,7 +145,17 @@
       "multiHitHits": "다중타",
       "maxHp": "최대 HP",
       "hits": "타격",
-      "selfHealing": "자가 회복"
+      "selfHealing": "자가 회복",
+      "damageReceived": "받은 피해",
+      "deaths": "사망",
+      "avgDps": "평균 DPS",
+      "peakDps": "최고 DPS",
+      "peakDpsTip": "전투 중 5초 동안의 최고 DPS",
+      "blockedTaken": "방패 막기 (완벽)",
+      "blockedTakenTip": "받은 공격 중 방패로 막은 비율, 괄호 안은 완벽 막기",
+      "parriedTaken": "패리 (완벽)",
+      "parriedTakenTip": "받은 공격 중 패리한 비율, 괄호 안은 완벽 패리",
+      "parryRateTip": "내 공격 중 대상이 패리한 비율"
     },
     "titleFor": "대상",
     "titleVs": "vs",
@@ -100,9 +164,100 @@
     "history": {
       "allPlayers": "전체 플레이어"
     },
-    "dpsChart": "DPS 차트",
+    "dpsChart": "초당 피해량",
     "historyBtn": "기록",
-    "timeline": "타임라인"
+    "timeline": "타임라인",
+    "buffs": {
+      "title": "버프",
+      "castByLabel": "시전자",
+      "casterAll": "전체",
+      "casterParty": "파티",
+      "casterSelf": "본인",
+      "sortLabel": "정렬",
+      "sortUptime": "유지율",
+      "sortFirst": "적용 순",
+      "showPassives": "패시브",
+      "passives": "패시브",
+      "uptime": "유지",
+      "onTarget": "대상의 디버프",
+      "selectPlayer": "위에서 플레이어를 선택하면 버프가 표시됩니다.",
+      "noneShown": "이 필터에 해당하는 항목이 없습니다.",
+      "none": "이 전투에서 버프나 디버프가 감지되지 않았습니다.",
+      "older": "이 전투에는 버프 데이터가 없습니다 (이전 버전에서 기록됨).",
+      "loading": "불러오는 중...",
+      "unknownCaster": "알 수 없음",
+      "summonTag": "소환수",
+      "castBy": "시전자: {name}",
+      "stacks": "중첩: {n}",
+      "ended": "종료: {reason}",
+      "beforePull": "전투 시작 전부터 적용됨",
+      "end": {
+        "stacks": "중첩 변경",
+        "expired": "시간 만료",
+        "takenOff": "스킬로 해제됨",
+        "removed": "제거됨 (사유 불명)",
+        "recast": "다른 시전자가 다시 적용",
+        "gone": "대상 사망 또는 이탈",
+        "mapLoad": "맵 이동",
+        "notListed": "확인되지 않은 종료",
+        "pushedOut": "새 중첩에 밀려남",
+        "unseen": "만료 (종료 미확인)",
+        "stillOn": "전투 종료 시 유지 중",
+        "replaced": "새 레벨로 교체됨"
+      }
+    },
+    "stagger": {
+      "title": "무력화",
+      "unknownActor": "알 수 없음",
+      "unknownSkill": "알 수 없는 스킬",
+      "older": "이 전투에는 무력화 데이터가 없습니다 (이전 버전에서 기록됨).",
+      "loading": "불러오는 중...",
+      "none": "이 전투에서 깎인 무력화 게이지가 없습니다.",
+      "incomplete": "시작 값을 보지 못했습니다: 이전 무력화가 빠져 있습니다.",
+      "ambiguous": "다른 플레이어의 것일 수 있습니다: 동시에 다른 사람이 타격했습니다.",
+      "ambiguousCount": "{n}회의 타격이 다른 플레이어의 것일 수 있습니다.",
+      "value": "무력화 {n}",
+      "ended": {
+        "break": "{secs}초 만에 무력화",
+        "reset": "실패: {max} 중 {missing} 남음",
+        "death": "무력화 전에 처치: {max} 중 {missing} 남음",
+        "despawn": "무력화 전에 사라짐: {max} 중 {missing} 남음",
+        "fightEnd": "전투 종료 시 진행 중: {max} 중 {missing} 남음"
+      }
+    },
+    "fightTimeline": "전투 타임라인",
+    "replay": {
+      "label": "리플레이",
+      "title": "리플레이",
+      "play": "리플레이 재생",
+      "pause": "일시정지",
+      "speed": "재생 속도",
+      "position": "리플레이 위치",
+      "positionText": "{total} 중 {at}",
+      "exit": "리플레이 종료 (전투 전체 보기)",
+      "wholeFightNote": "받은 피해, 최소 / 최대, 버프 유지율은 전투 전체 기준입니다.",
+      "moreSkills": "+{n}개 더, 일시정지하면 표시",
+      "noHealTiming": "이 전투의 치유에는 시간 기록이 없습니다 (이전 버전으로 저장됨). 전투 전체 값을 표시합니다.",
+      "unavailable": "이 전투는 타격 시간 없이 저장되어 리플레이할 수 없습니다"
+    },
+    "casts": "시전",
+    "resize": "드래그하여 크기 조절",
+    "healTimingNote": "이 전투에는 치유 시점 데이터가 없습니다(이전 버전으로 기록됨).",
+    "chart": {
+      "bossHp": "보스 HP",
+      "ping": "핑",
+      "death": "사망",
+      "died": "사망 시각",
+      "downFor": "사망 시간"
+    },
+    "hpsChart": "초당 치유량",
+    "sectionChart": "차트",
+    "showSections": "표시할 영역",
+    "hoverTooltip": {
+      "loading": "불러오는 중...",
+      "empty": "이 전투의 스킬 데이터가 없습니다",
+      "error": "스킬을 불러올 수 없습니다"
+    }
   },
   "history": {
     "title": "전투 기록",
@@ -121,6 +276,13 @@
     "viewDungeon": "던전별 묶기",
     "viewGrouped": "보스별 그룹",
     "fightCount": "{n}회",
+    "best": "최고 {time}",
+    "top": "최대 {damage}",
+    "showAll": "{n}개 모두 보기",
+    "showFewer": "접기",
+    "expandAll": "모두 펼치기",
+    "collapseAll": "모두 접기",
+    "training": "훈련",
     "fightCountOne": "1회",
     "previewUpload": "업로드 미리보기",
     "previewUploadTip": "이 전투를 공유하면 무엇이 올라가는지 파일로 남깁니다. 전송하지 않습니다.",
@@ -131,25 +293,61 @@
     "uploadWorking": "업로드 중…",
     "uploadDonePublic": "업로드 완료. 링크 복사됨: {url}",
     "uploadDonePrivate": "비공개로 업로드됨. 링크 복사됨: {url}",
-    "openWorld": "필드"
+    "openWorld": "필드",
+    "tabFights": "전투",
+    "tabBests": "개인 최고 기록",
+    "search": "보스 또는 던전…",
+    "allCharacters": "모든 캐릭터",
+    "allDifficulties": "모든 난이도",
+    "periodAll": "전체 기간",
+    "periodToday": "최근 24시간",
+    "period7": "최근 7일",
+    "period30": "최근 30일",
+    "sort": "정렬",
+    "sortNewest": "최신순",
+    "sortFastest": "최단 처치",
+    "sortPartyDps": "파티 DPS",
+    "sortMyDps": "내 DPS",
+    "sortRecent": "최근순",
+    "sortTier": "던전 등급순",
+    "killsOnly": "처치만",
+    "wipe": "전멸",
+    "pb": "최고",
+    "pbTip": "개인 최고 기록 중 하나",
+    "party": "파티",
+    "you": "나",
+    "totalDamage": "총 피해량",
+    "finalBoss": "최종 보스",
+    "fightGone": "이 전투는 더 이상 저장되어 있지 않지만, 기록은 유지됩니다.",
+    "unconfirmedTip": "처치가 기록되지 않았습니다(2.0.87 이전 전투). 입힌 피해량으로 판단했습니다.",
+    "openBest": "이 전투 열기",
+    "killOne": "처치 1회",
+    "wipeOne": "전멸 1회",
+    "kills": "처치 {n}회",
+    "wipes": "전멸 {n}회",
+    "otherBosses": "다른 보스 ({n})",
+    "otherLevels": "다른 레벨 ({n})",
+    "noBests": "아직 던전 처치 기록이 없습니다.",
+    "encounter": "전투 대상",
+    "fastestKill": "최단 처치",
+    "yourBest": "내 최고 DPS",
+    "partyBest": "파티 최고"
   },
   "settings": {
     "title": "설정",
-    "lockedPort": "감지된 장치/포트",
-    "resetDetection": "감지 초기화",
-    "characterName": "Name#ID",
+    "lockedPort": "감지된 연결",
+    "resetDetection": "다시 감지",
+    "characterName": "내 캐릭터",
     "characterNamePlaceholder": "캐릭터 이름 입력",
-    "pinMeToTop": "내 캐릭터를 맨 위에 고정",
+    "pinMeToTop": "내 행을 맨 위에 고정",
     "slimMode": "슬림 모드",
     "meterLayout": {
       "label": "미터 레이아웃",
-      "beta": "베타 UI",
-      "betaSlim": "베타 슬림",
-      "classic": "클래식 UI",
-      "classicSlim": "클래식 슬림"
+      "standard": "표준",
+      "slim": "슬림"
     },
     "detailsMonitor": {
-      "label": "상세 정보를 표시할 모니터",
+      "label": "보조 모니터에 상세 정보 표시",
       "off": "끕",
       "primary": "기본",
       "missing": "해당 디스플레이가 연결되어 있지 않습니다.",
@@ -166,39 +364,85 @@
     "connection": "연결",
     "diagnostics": "진단",
     "device": {
-      "label": "캡처 장치",
+      "label": "네트워크 어댑터",
       "autoDetect": "자동 감지"
     },
     "advanced": "고급",
     "bossLogs": "보스별 로그 활성화",
-    "saveRawPackets": "패킷 로깅 활성화",
+    "saveRawPackets": "패킷 로그",
     "resetAllSettings": "모든 설정 초기화",
     "bold": {
-      "label": "굵게",
+      "label": "굵은 글씨",
       "names": "이름",
       "dps": "DPS"
     },
     "showPing": "핑 표시",
-    "showTotalDps": "총 DPS/DMG 표시",
-    "roundDps": "DPS 반올림",
-    "autoHideMeter": "미터 자동 숨기기",
-    "showSuspendBtn": "일시정지 버튼 표시",
-    "showLockBtn": "잠금 버튼 표시 (클릭 통과)",
+    "showOdyle": "오드 에너지 표시",
+    "odyleEnergy": "오드 에너지",
+    "showTtk": "예상 처치 시간 표시",
+    "showTotalDps": "파티 합계 표시",
+    "roundDps": "DPS를 천 단위로 줄이기 (13k)",
+    "showDpsSuffix": "DPS에 /s 붙이기",
+    "autoHideMeter": "AION2가 활성 창이 아닐 때 숨기기",
+    "hideWhenGameClosed": "AION2가 꺼져 있으면 숨기기",
+    "hideWhenSolo": "파티 중에만 표시",
+    "hideOutOfCombat": {
+      "label": "전투 중이 아닐 때 숨기기",
+      "off": "끄기",
+      "seconds": "{seconds}초 후"
+    },
+    "showSuspendBtn": "수집 일시정지 버튼 표시",
+    "showLockBtn": "클릭 통과 잠금 버튼 표시",
     "playerLimit": {
       "label": "최대 표시 인원"
     },
-    "debugLogging": "디버그 로그 활성화",
+    "partyPresence": "파티의 A2Tools 사용자 표시",
+    "debugLogging": "디버그 로그",
     "quit": "종료",
     "discord": {
       "title": "디스코드",
       "activity": "디스코드에 플레이 중인 정보 표시",
-      "activityHint": "AION2가 실행 중일 때 디스코드 상태에 캐릭터 이름, 직업, 레벨, 서버와 싸우고 있는 보스를 표시합니다. 이 컴퓨터의 디스코드 앱을 통해 표시되며 계정은 필요하지 않습니다."
+      "activityHint": "AION2가 실행 중일 때 디스코드 상태에 캐릭터 이름, 직업, 레벨, 서버와 싸우고 있는 보스를 표시합니다. 이 컴퓨터의 디스코드 앱을 통해 표시되며 계정은 필요하지 않습니다. 디스코드에 표시할 수치를 고르면 전투력이나 장비 점수도 표시합니다.",
+      "stat": "디스코드에 표시할 수치",
+      "statHint": "디스코드 상태에서 레벨 뒤에 표시할 수치입니다."
+    },
+    "streamOverlay": {
+      "title": "방송",
+      "enable": "방송 오버레이 (다른 PC의 OBS)",
+      "enableHint": "미터를 로컬 네트워크에 공유해서 두 번째 PC의 OBS에서 브라우저 소스로 띄울 수 있게 합니다.",
+      "port": "포트",
+      "url": "브라우저 소스 URL",
+      "copy": "복사",
+      "copied": "복사됨",
+      "newKey": "새 키",
+      "help": "다른 PC의 OBS에서 이 URL로 브라우저 소스를 추가하세요. 처음에는 Windows 방화벽이 미터를 허용할지 묻습니다. 개인 네트워크에서 허용해 주세요. 링크를 가진 같은 네트워크의 누구나 미터를 볼 수 있으며, '새 키'를 누르면 이전 링크는 더 이상 작동하지 않습니다.",
+      "noAddress": "네트워크 주소를 찾지 못했습니다. 이 PC가 네트워크에 연결되어 있나요?",
+      "portInvalid": "1024~65535 사이의 포트를 입력하세요.",
+      "error": "오버레이를 시작하지 못했습니다: {error}",
+      "waiting": "전투 대기 중…",
+      "reconnecting": "미터에 다시 연결하는 중…",
+      "player": "플레이어",
+      "displayName": "방송에 표시할 이름",
+      "displayNamePlaceholder": "캐릭터 이름"
     },
     "version": "버전",
+    "update": {
+      "check": "업데이트 확인",
+      "checking": "확인 중…",
+      "current": "최신 버전입니다",
+      "installing": "업데이트 중…",
+      "available": "{version} 출시",
+      "failed": "확인하지 못했습니다. 나중에 다시 시도하세요."
+    },
     "theme": {
-      "label": "테마",
+      "label": "색상 테마",
       "options": {
         "aion2": "AION2",
+        "aion2Classes": "AION2 (직업 색상)",
+        "aion2ClassesVivid": "AION2 (직업 색상, 선명)",
+        "aion2Spectrum": "스펙트럼",
+        "aion2Aurora": "오로라",
+        "aion2Sunset": "노을",
         "asmodian": "아스모디안",
         "cogni": "코그니",
         "elyos": "엘리오스",
@@ -210,27 +454,85 @@
         "varian": "바리안"
       }
     },
+    "settingsTheme": {
+      "label": "설정 창 색상",
+      "tip": "이 설정 창의 색상입니다. 미터는 자체 테마를 유지합니다.",
+      "options": {
+        "meter": "미터 테마",
+        "midnight": "미드나이트",
+        "graphite": "그래파이트",
+        "violet": "바이올렛",
+        "forest": "포레스트",
+        "crimson": "크림슨",
+        "ocean": "오션",
+        "sapphire": "사파이어",
+        "indigo": "인디고",
+        "rose": "로즈",
+        "sunset": "선셋",
+        "amber": "앰버",
+        "copper": "코퍼",
+        "lime": "라임",
+        "ice": "아이스",
+        "slate": "슬레이트",
+        "onyx": "오닉스"
+      }
+    },
+    "font": {
+      "label": "글꼴",
+      "tip": "미터, 설정, 전투 기록, 상세 정보의 글꼴입니다.",
+      "options": {
+        "meter": "미터 글꼴",
+        "system": "시스템 글꼴",
+        "inter": "Inter",
+        "exo2": "Exo 2",
+        "oxanium": "Oxanium",
+        "jetbrains": "JetBrains Mono (숫자 폭이 같음)",
+        "atkinson": "Atkinson Hyperlegible (글자와 숫자가 뚜렷함)",
+        "lexend": "Lexend (읽기 쉬움)",
+        "andika": "Andika (난독증용)"
+      }
+    },
+    "textureOffset": "질감 위치 다르게",
+    "barTexture": {
+      "label": "막대 질감",
+      "supportersOnly": "후원자 전용: 위의 A2 Tools 계정에서 로그인하면 사용할 수 있습니다.",
+      "options": {
+        "none": "없음",
+        "flames": "불꽃",
+        "crystal": "서리 수정",
+        "glacier": "빙하",
+        "feathers": "깃털",
+        "wing": "날개",
+        "storm": "폭풍",
+        "nebula": "성운",
+        "galaxy": "은하",
+        "aura": "오라"
+      }
+    },
+    "appearanceGroups": {
+      "general": "일반",
+      "colours": "색상",
+      "layout": "레이아웃",
+      "opacity": "불투명도"
+    },
     "language": {
       "label": "언어"
     },
     "windowOpacity": {
-      "label": "메인 창 불투명도"
+      "label": "배경 불투명도"
+    },
+    "titleOpacity": {
+      "label": "제목 표시줄 불투명도"
     },
     "meterOpacity": {
-      "label": "미터 바 불투명도"
+      "label": "막대 불투명도"
+    },
+    "barPreview": "미리 보기",
+    "meterSaturation": {
+      "label": "막대 색 선명도"
     },
     "bossNameSize": {
-      "label": "대상 이름 크기"
-    },
-    "targetWindow": {
-      "label": "대상 시간 범위",
-      "options": {
-        "5s": "5초",
-        "10s": "10초",
-        "15s": "15초",
-        "20s": "20초",
-        "30s": "30초"
-      }
+      "label": "제목 크기"
     },
     "targetSelection": {
       "label": "대상 선택 (실험적)",
@@ -241,8 +543,17 @@
         "allTargets": "모든 대상 합산"
       }
     },
+    "updateRate": {
+      "label": "미터 갱신 주기",
+      "options": {
+        "100": "0.1초",
+        "200": "0.2초 (기본)",
+        "250": "0.25초",
+        "500": "0.5초"
+      }
+    },
     "allTargetsWindow": {
-      "label": "모든 대상 집계 시간",
+      "label": "전체 대상 시간 범위",
       "options": {
         "30s": "30초",
         "1m": "1분",
@@ -257,14 +568,28 @@
       "reload": "데이터 새로고침",
       "toggle": "창 표시/숨기기",
       "pressKeys": "키를 누르세요...",
-      "needModifiers": "수정자 2개 이상 필요",
-      "lock": "오버레이 잠금/해제"
+      "tooManyKeys": "키는 최대 3개",
+      "plugins": "플러그인 창 다시 불러오기",
+      "notSet": "설정 안 됨",
+      "restoreDefaults": "기본값으로 복원",
+      "hint": "단축키를 클릭한 뒤 키를 1~3개 누르세요. Esc로 취소합니다.",
+      "lock": "오버레이 잠금/해제",
+      "openDesktop": "데스크톱 단축키"
     },
     "defaultMeterMode": {
-      "label": "기본 미터 모드"
+      "label": "시작 대상 모드"
+    },
+    "partyStat": {
+      "label": "플레이어 이름 옆",
+      "options": {
+        "combatPower": "전투력",
+        "gearScore": "장비 점수",
+        "both": "둘 다",
+        "off": "끄기"
+      }
     },
     "trainingMode": {
-      "label": "훈련 모드",
+      "label": "훈련 모드의 상세 정보",
       "options": {
         "all": "전체",
         "highestDamage": "최대 피해"
@@ -285,20 +610,168 @@
       "failed": "로그인 실패: {error}",
       "supporter": "후원자",
       "autoUpload": "보스전 자동 업로드",
-      "autoUploadHint": "보스전이 끝나면 a2tools.app에서 선택한 공개 설정으로 계정에 업로드됩니다. 다른 플레이어의 이름은 가려집니다. 허수아비 전투는 업로드되지 않습니다."
+      "autoUploadHint": "보스전이 끝나면 a2tools.app에서 선택한 공개 설정으로 계정에 업로드됩니다. 다른 플레이어의 이름은 가려집니다. 허수아비 전투는 업로드되지 않습니다.",
+      "guestUpload": "계정 없이 보스전 업로드",
+      "guestUploadHint": "보스전이 끝나면 계정 없이 공개로 a2tools.app에 업로드됩니다. 다른 플레이어의 이름은 가려집니다. 나중에 로그인하면 이 PC에서 업로드한 전투가 내 것이 됩니다.",
+      "guestClaimHint": "이 PC에서 업로드한 전투는 보관되어 있습니다. 여기서 로그인해 내 것으로 만들거나, 코드를 받아 다른 기기에서 가져올 수 있습니다.",
+      "guestClaimButton": "가져오기 코드 받기",
+      "guestClaimCode": "로그인한 상태로 {url} 에서 {code} 를 입력하세요. 코드는 15분 후에 만료됩니다.",
+      "claimed": "이 PC에서 업로드한 전투 {count}개가 이제 내 것입니다."
     },
     "sendLogs": {
-      "hint": "버그 신고를 위해 최근 패킷 로그 3개를 개발자에게 보냅니다.",
+      "hint": "디버그 로그와 최근 패킷 로그(총 3개 파일)를 버그 신고용으로 개발자에게 보냅니다.",
       "button": "개발자에게 로그 보내기",
-      "confirm": "최근 패킷 로그 3개를 A2 Tools 개발자에게 보낼까요?\n\n패킷 로그는 패킷 기록이 켜져 있는 동안 기록된 게임 통신 원본이며, 캐릭터 이름이 포함됩니다. 개발자만 열어볼 수 있으며 30일 후 삭제됩니다.",
+      "confirm": "디버그 로그와 최근 패킷 로그를 A2 Tools 개발자에게 보낼까요?\n\n디버그 로그에는 미터가 한 동작이 기록됩니다. 패킷 로그는 패킷 기록이 켜져 있는 동안 기록된 게임의 원본 트래픽입니다. 둘 다 캐릭터 이름이 포함될 수 있습니다. 개발자만 열 수 있으며 30일 후에 삭제됩니다.",
       "sending": "보내는 중...",
       "sent": "보냈습니다. 신고 코드는 {code}입니다. Discord에서 개발자에게 알려주세요.",
-      "failed": "보내지 못했습니다: {error}"
+      "failed": "보내지 못했습니다: {error}",
+      "files": "다음 파일이 전송됩니다:",
+      "contents": "패킷 로그에는 채팅과 다른 플레이어의 이름이 들어 있을 수 있습니다."
+    },
+    "barGap": {
+      "label": "막대 간격"
+    },
+    "debugLoggingLocked": "패킷 로깅이 켜져 있는 동안 켜져 있습니다. 패킷 로그를 분석하려면 디버그 로그가 필요합니다.",
+    "tips": {
+      "showOdyle": "미터 아래에 게임과 같은 형식으로 오드 에너지를 표시합니다: 기본 (+충전). 로그인, 서버 이동, 에너지 변화 시 갱신됩니다. 그 전까지는 (미터를 다시 시작한 후 등) 마지막으로 확인된 값이 흐리게 표시됩니다.",
+      "characterName": "미터가 어느 행이 나인지 알 수 있도록 게임 내 이름과 ID를 입력합니다. 보통 자동으로 찾습니다.",
+      "device": "미터가 게임 트래픽을 읽는 네트워크 연결입니다. 자동 감지가 찾아 주며, VPN을 쓰면 직접 고르세요.",
+      "lockedPort": "게임이 발견된 어댑터와 포트입니다.",
+      "defaultMeterMode": "미터가 시작할 때의 대상 모드입니다: 보스, 대상, 훈련, 전체.",
+      "playerLimit": "미터에 표시할 플레이어 행 수입니다. 나머지는 표시하지 않습니다.",
+      "pinMeToTop": "피해량과 관계없이 내 행이 항상 맨 위에 있습니다.",
+      "autoHideMeter": "다른 창이 게임 앞에 있으면 미터가 사라지고, 게임으로 돌아오면 다시 나타납니다.",
+      "detailsMonitor": "선택한 디스플레이에서 상세 정보 창을 열고 그곳에 유지합니다.",
+      "showTtk": "전투 타이머 옆에 보스전 전체에 걸릴 예상 시간을 표시합니다.",
+      "showTotalDps": "행 아래에 파티 전체 DPS와 피해량을 보여 주는 막대를 표시합니다.",
+      "roundDps": "13,412는 13k로 표시됩니다.",
+      "showSuspendBtn": "다시 누를 때까지 게임 트래픽 읽기를 멈추는 버튼을 미터에 표시합니다.",
+      "showLockBtn": "미터가 마우스를 무시하게 하여 클릭이 게임으로 전달되도록 하는 버튼입니다.",
+      "windowOpacity": "미터 배경의 투명도입니다. 막대와 글자는 그대로입니다.",
+      "titleOpacity": "미터 제목 표시줄의 투명도를 아래 배경과 따로 정합니다. 움직이기 전까지는 배경 불투명도를 따릅니다.",
+      "meterOpacity": "색이 있는 피해량 막대의 불투명도입니다.",
+      "meterSaturation": "막대 색의 진하기입니다. 낮추면 부드럽게, 높이면 더 선명하게 보입니다.",
+      "bossNameSize": "막대 위에 있는 보스 또는 대상 이름의 크기입니다.",
+      "partyStat": "미터와 상세에서 각 플레이어 이름 옆에 표시되는 숫자입니다. 내 파티원에게만 표시됩니다.",
+      "barTexture": "미터 막대 위에 무늬를 입힙니다. A2 Tools를 후원해 주신 분들께 드리는 감사의 표시입니다.",
+      "textureOffset": "막대마다 질감이 다른 위치에서 시작해 막대들이 똑같아 보이지 않습니다.",
+      "trainingMode": "훈련 모드에서 상세 정보 창이 보여 줄 허수아비입니다: 전부 함께, 또는 가장 많이 때린 하나만.",
+      "allTargetsWindow": "전체 대상 모드에서 마지막 타격 전 이 시간 안에 맞힌 모든 대상을 합산합니다.",
+      "updateRate": "미터 수치를 새로 고치는 간격입니다. 빠를수록 피해가 빨리 보이지만 CPU를 더 사용합니다.",
+      "partyPresence": "A2Tools를 쓰는 파티원은 내 이름 옆에 작은 A2 표시를 보고, 나도 그들의 표시를 봅니다. A2Tools를 쓰는 파티원 누구나 볼 수 있으므로, 내가 외부 미터를 쓴다는 것을 알게 됩니다. 캐릭터 이름과 서버의 해시만 전송됩니다.",
+      "debugLogging": "개발자가 문제를 찾는 데 쓸 수 있는 진단 로그를 기록합니다.",
+      "saveRawPackets": "버그 보고용으로 원시 게임 트래픽을 기록합니다. 디버그 로그도 함께 켜집니다.",
+      "globalHotkeys": "아래 키는 게임 화면이 앞에 있을 때도 작동합니다. 끄면 다른 프로그램이 이 키를 쓸 수 있습니다. 리눅스에서는 데스크톱이 키를 등록하며 승인을 요청할 수 있습니다.",
+      "pluginDevMode": "이 컴퓨터의 폴더에서 플러그인을 불러와 만들고 시험할 수 있습니다. 검토되지 않은 플러그인이므로 신뢰할 수 있는 것만 불러오세요.",
+      "showMeter": "끄면 플러그인만 표시됩니다. 미터는 백그라운드에서 전투 기록과 업로드를 계속합니다. 여기, 표시/숨기기 단축키, 또는 플러그인 창의 미터 버튼으로 다시 켤 수 있습니다.",
+      "clearOnZone": "지역이 바뀐 뒤 마지막 전투를 미터에서 지우는 시점입니다. 모든 전투는 어느 쪽이든 기록에 남습니다.",
+      "hideWhenGameClosed": "게임이 실행 중이 아닐 때 미터를 숨기고, 게임이 시작되면 다시 보여 줍니다.",
+      "hideWhenSolo": "파티에 속해 있지 않을 때 미터를 숨기고, 파티에 들어가면 다시 보여 줍니다. 표시/숨기기 단축키로 언제든 띄울 수 있습니다.",
+      "hideOutOfCombat": "전투가 끝나고 이 시간이 지나면 미터를 숨기고, 다음 공격 때 다시 보여 줍니다. 설정, 기록, 상세 창이 열려 있거나 마우스가 미터 위에 있으면 숨기지 않습니다.",
+      "runAsAdmin": "게임의 프레임 레이트를 표시하는 데 필요합니다. 미터를 시작할 때마다 Windows가 확인합니다.",
+      "shareData": "서버의 필드 보스 타이머와 보급 요청을 a2tools.app과 공유해 모두의 A2Tools를 최신으로 유지합니다. 지도에 보이는 보스, 처치되는 것을 본 보스와 그 HP, 초기화 후의 요청 게시판이 전송됩니다. 캐릭터에 관한 정보는 전송되지 않습니다.",
+      "pluginAutoUpdate": "미터를 시작할 때 플러그인 업데이트가 백그라운드에서 자동으로 설치됩니다. 새로운 권한을 요청하는 업데이트는 여전히 확인을 기다립니다.",
+      "meterAnchor": "행이 늘거나 줄어도 움직이지 않는 미터의 가장자리입니다."
+    },
+    "globalHotkeys": "단축키 사용",
+    "hotkeyConsent": {
+      "title": "단축키를 켤까요?",
+      "desktop": "리눅스에서는 데스크톱이 미터의 단축키를 설정하며, 승인을 요청할 수 있습니다.",
+      "anytime": "단축키는 언제든지 끌 수 있습니다.",
+      "confirm": "켜기",
+      "cancel": "나중에"
+    },
+    "keybindTaken": "다른 프로그램이 이미 이 키를 쓰고 있습니다. 다른 키를 고르세요.",
+    "keybindShared": "다른 동작이 이 키를 쓰고 있습니다. 다른 키를 고르세요.",
+    "keybindUnset": "데스크톱에서 아직 키를 지정하지 않았습니다. '데스크톱 단축키'에서 설정하세요.",
+    "keybindAssigned": "데스크톱에서 {key}을(를) 사용합니다. '데스크톱 단축키'에서 바꿀 수 있습니다.",
+    "plugins": {
+      "title": "플러그인",
+      "devMode": "플러그인 개발자 모드",
+      "hint": "여기에서 불러온 플러그인은 검토되지 않았습니다. 신뢰할 수 있는 플러그인만 불러오세요.",
+      "add": "플러그인 폴더 불러오기…",
+      "open": "열기",
+      "remove": "제거",
+      "checkUpdates": "업데이트 확인",
+      "checking": "확인 중…",
+      "upToDate": "모든 플러그인이 최신입니다.",
+      "updated": "업데이트됨: {list}",
+      "updatedFrom": "{version}에서 업데이트됨",
+      "added": "새로 불러옴",
+      "intro": "검토된 플러그인은 미터 옆에 기능을 더합니다. 각 플러그인은 설치할 때 요청한 것만 사용할 수 있습니다.",
+      "installed": "설치됨",
+      "none": "아직 설치된 플러그인이 없습니다.",
+      "available": "사용 가능",
+      "catalogLoading": "플러그인 목록을 불러오는 중…",
+      "catalogEmpty": "검토된 플러그인이 모두 설치되어 있습니다.",
+      "catalogError": "플러그인 목록을 불러오지 못했습니다: {error}",
+      "offline": "오프라인 버전은 플러그인을 내려받지 않습니다.",
+      "install": "설치",
+      "update": "업데이트",
+      "updateTo": "{version}(으)로 업데이트",
+      "downloading": "다운로드 중…",
+      "installing": "설치 중…",
+      "installDone": "{name} {version}이(가) 설치되었습니다.",
+      "updatesAvailable": "업데이트 가능: {list}",
+      "unreviewed": "개발",
+      "by": "제작: {author}",
+      "consentTitle": "{name}을(를) 설치할까요?",
+      "consentUpdateTitle": "{name}을(를) 업데이트할까요?",
+      "consentIntro": "다음을 할 수 있습니다:",
+      "consentNew": "새 버전은 다음도 요청합니다:",
+      "consentNetwork": "웹 페이지와 마찬가지로 플러그인도 인터넷에 접속할 수 있습니다.",
+      "consentCancel": "취소",
+      "permStorage": "이 컴퓨터에 자체 데이터 저장",
+      "permNotify": "자체 창에 짧은 메시지 표시",
+      "permWindow": "게임의 포커스를 빼앗지 않고 자체 창을 표시하거나 숨기기",
+      "permWidgets": "어디로든 옮기고 고정할 수 있는 작은 전용 창 표시",
+      "permBossTimers": "a2tools.app에서 플레이어들이 공유하는 필드 보스 타이머 읽기",
+      "permCharacter": "캐릭터의 이름, 서버, 클래스, 레벨 보기",
+      "permDecoder": "선택한 게임 데이터 읽기 (다른 플레이어 정보가 포함될 수 있음): {name}",
+      "permNone": "창을 표시하는 것 외에는 없음",
+      "enabled": "사용",
+      "enabledTip": "켜짐: 미터와 함께 시작됩니다. 꺼짐: 설치된 상태로 남지만 실행되지 않습니다.",
+      "showMeter": "미터 표시",
+      "hideClosed": "AION2가 꺼져 있으면 숨기기",
+      "hideUnfocused": "AION2가 활성 창이 아닐 때 숨기기",
+      "inDock": "플러그인 독에 넣기 (끄면: 별도 창)",
+      "search": "검색",
+      "noMatch": "일치하는 플러그인이 없습니다.",
+      "permsTitle": "할 수 있는 일:",
+      "permFps": "게임의 프레임 레이트 표시 (Windows에서는 이를 위해 미터가 관리자 권한 실행을 요청합니다)",
+      "permDeathRecap": "플레이어에게 처치된 후: 상대가 누구였는지, 당신에게 준 피해",
+      "permScreenshot": "자체 창의 스크린샷 찍기 (클립보드와 스크린샷 폴더로)",
+      "testHint": "누구나 써 볼 수 있는 초기 버전으로, 다른 플러그인처럼 서명되어 있습니다. 바뀌거나 다듬어지지 않은 부분이 있을 수 있으니 발견한 점을 알려 주세요.",
+      "testTitle": "테스트 플러그인",
+      "autoUpdate": "플러그인 자동 업데이트",
+      "whatsNew": "{version}의 새로운 점"
+    },
+    "clearOnZone": {
+      "label": "미터 초기화",
+      "options": {
+        "instance": "던전에 들어가거나 나올 때",
+        "any": "지역이 바뀔 때마다",
+        "never": "안 함 (마지막 전투 유지)"
+      }
+    },
+    "runAsAdmin": "관리자 권한으로 실행",
+    "runAsAdminTitle": "A2Tools - 관리자 권한으로 실행",
+    "runAsAdminAsk": "게임의 프레임 레이트를 표시하려면 미터를 관리자 권한으로 실행해야 합니다.\n\n지금 미터를 관리자 권한으로 다시 시작할까요? 미터를 시작할 때마다 Windows가 확인합니다. 설정에서 끌 수 있습니다.",
+    "shareData": "유용한 데이터를 A2Tools와 동기화",
+    "meterAnchor": {
+      "label": "미터 고정 위치",
+      "options": {
+        "top": "위",
+        "middle": "가운데",
+        "bottom": "아래"
+      }
     }
   },
   "support": {
     "button": "지원하기",
     "title": "Support the author on Ko-fi",
+    "linksHint": "Ko-fi, Patreon, 爱发电, PayPal은 브라우저에서 해당 사이트를 엽니다. 암호화폐 버튼은 주소를 복사합니다.",
+    "perks": "$5마다 후원자 혜택 12개월이 주어지며, 한 번 결제에 최대 2년입니다. Ko-fi 메시지에 A2 Tools 계정 페이지의 코드를 넣거나, Patreon에서는 같은 이메일을 사용하세요.",
     "titleWechat": "Support the author on WeChat",
     "label": {
       "wechat": "WeChat"
@@ -311,24 +784,34 @@
     "aria": {
       "afdian": "爱发电 열기",
       "kofi": "Ko-fi 열기",
+      "patreon": "Patreon 열기",
       "close": "후원 모달 닫기",
       "wechat": "WeChat QR 코드 보기",
       "paypal": "PayPal 열기",
       "btc": "BTC 주소 복사",
       "eth": "ETH 주소 복사",
       "usdc": "USDC 주소 복사"
-    }
+    },
+    "sponsorLabel": "제휴 광고",
+    "sponsorShort": "ExitLag로 핑 줄이기",
+    "sponsorCode": "코드",
+    "sponsorDisclosure": "제휴 링크입니다. 구독 시 A2 Tools가 수수료를 받으며, 이는 도구를 무료로 유지하는 데 사용됩니다.",
+    "more": "a2tools.app에서 다른 후원 방법 보기"
   },
   "battleTime": {
-    "analysing": "데이터 모니터링 중...",
+    "analysing": "모니터링 중",
+    "ttkTooltip": "보스의 남은 생명력과 파티 피해량으로 예상한 전체 전투 시간",
     "idle": "대기 중",
-    "notRunning": "AION2 not running",
-    "suspended": "앱 일시정지됨",
+    "notRunning": "AION2 꺼짐",
+    "suspended": "일시정지됨",
     "waitingBoss": "보스 대기 중"
   },
   "meter": {
     "identifyingPlayer": "#{id}",
-    "dpsSuffix": "/초"
+    "a2toolsUser": "A2Tools 사용",
+    "dpsSuffix": "/초",
+    "others": "기타",
+    "deaths": "이번 전투에서 {count}번 사망"
   },
   "skills": {
     "fallback": "스킬 {code}",
@@ -346,7 +829,7 @@
   },
   "connection": {
     "auto": "자동",
-    "detecting": "Detecting AION2 connection...",
+    "detecting": "연결 중...",
     "loopback": "로컬 루프백"
   },
   "target": {
@@ -376,6 +859,8 @@
   },
   "presence": {
     "level": "Lv {level}",
+    "combatPower": "전투력 {cp}",
+    "gearScore": "장비 점수 {gs}",
     "fighting": "{boss} 전투 중",
     "inGame": "게임 중",
     "elyos": "천족",
@@ -385,6 +870,11 @@
     "tierExpedition": "원정",
     "tierConquestNormal": "정복 (일반)",
     "tierConquestHard": "정복 (어려움)"
+  },
+  "partyPromo": {
+    "title": "새 기능: 파티의 A2Tools 사용자 보기",
+    "text": "A2Tools를 쓰는 파티원의 이름 옆에 작은 A2 표시가 붙고, 그들의 미터에서도 내 이름 옆에 표시됩니다.",
+    "hint": "A2Tools를 쓰는 파티원은 내가 외부 미터를 쓴다는 것을 알 수 있습니다. 캐릭터 이름과 서버의 해시만 전송됩니다. 설정에서 언제든 바꿀 수 있습니다."
   },
   "discordPromo": {
     "title": "새 기능: 디스코드 상태 표시",
@@ -399,6 +889,88 @@
     "hint": "다른 플레이어의 이름은 가려지며, 허수아비 전투는 업로드되지 않습니다. 설정에서 언제든지 바꿀 수 있습니다.",
     "signIn": "로그인",
     "later": "나중에",
-    "close": "닫기"
+    "close": "닫기",
+    "guest": "계정 없이",
+    "guestHint": "계정이 없어도 전투를 업로드할 수 있고, 나중에 로그인하면 내 것이 됩니다."
+  },
+  "npcapPrompt": {
+    "ask": "A2Tools DPS 미터는 게임 네트워크 트래픽을 읽기 위해 Npcap이 필요한데, Npcap이 없거나 작동하지 않습니다.\n\n지금 설치할까요? 미터가 npcap.com에서 Npcap 설치 프로그램을 내려받아 실행합니다. Npcap이 설치되면 미터가 자동으로 캡처를 시작합니다.\n\n직접 설치하려면 아니요를 누르고 https://npcap.com/#download 에서 설치하세요.",
+    "downloadFailed": "Npcap 설치 프로그램을 내려받지 못했습니다 ({error}).\n\nhttps://npcap.com/#download 에서 직접 설치한 뒤 미터를 다시 여세요.",
+    "stillMissing": "Npcap이 아직 작동하지 않습니다. 설치 프로그램을 끝까지 진행하지 않고 닫았다면 https://npcap.com/#download 에서 Npcap을 설치한 뒤 미터를 다시 여세요."
+  },
+  "pluginUpdatePrompt": {
+    "title": "A2Tools - 플러그인 업데이트",
+    "one": "플러그인 업데이트가 있습니다:",
+    "many": "플러그인 업데이트가 있습니다:",
+    "alsoAsks": "새 버전은 다음 권한도 요청합니다:",
+    "updateNow": "지금 업데이트할까요?",
+    "failed": "업데이트하지 못했습니다:"
+  },
+  "pluginDock": {
+    "tabs": "플러그인을 탭으로 보기",
+    "stack": "플러그인을 세로로 쌓기",
+    "fold": "독 접기",
+    "unfold": "독 펼치기",
+    "hideControls": "조작 버튼 숨기기",
+    "showControls": "조작 버튼 보이기",
+    "popOut": "별도 창으로 열기",
+    "pluginSettings": "플러그인 설정",
+    "hide": "숨기기 (플러그인은 계속 실행됩니다)",
+    "close": "독 숨기기 (플러그인은 계속 실행됩니다)",
+    "hideMeter": "DPS 미터 숨기기",
+    "showMeter": "DPS 미터 보이기",
+    "settings": "미터 설정",
+    "opacity": "배경 불투명도",
+    "failed": "이 플러그인을 시작할 수 없습니다: {error}"
+  },
+  "sharing": {
+    "title": "리더보드 만들기에 참여하시겠어요?",
+    "sub": "하나를 골라 시작하세요. 설정 → 개인정보에서 언제든 바꿀 수 있습니다.",
+    "shareTitle": "익명으로 전투 공유",
+    "recommended": "추천",
+    "shareText": "보스 전투가 모든 이름을 가린 채 a2tools.app의 공개 로그에 올라갑니다. 계정은 필요 없습니다.",
+    "noTitle": "공유하지 않음",
+    "noText": "전투에 관한 어떤 정보도 이 PC 밖으로 나가지 않습니다.",
+    "signInBefore": "내 이름으로 전투를 올리고 싶으신가요?",
+    "signIn": "A2 Tools로 로그인",
+    "signInAfter": "그 전에 공유한 전투는 계정으로 옮겨집니다.",
+    "previewTitle": "공유된 전투가 a2tools.app에 보이는 모습",
+    "never": "PC 이름과 캐릭터의 전체 이름은 절대 전송되지 않습니다.",
+    "policy": "개인정보 처리방침",
+    "continue": "계속"
+  },
+  "sharingNotice": {
+    "title": "내 전투가 리더보드를 만드는 데 쓰이고 있습니다",
+    "text": "마친 보스 전투는 내 이름을 포함해 모든 이름을 가린 채(예: Na***a) a2tools.app에 공유됩니다. 계정은 필요 없고, 설정 → 개인정보에서 언제든 멈출 수 있습니다.",
+    "stop": "공유 중지",
+    "details": "자세히",
+    "keep": "계속 공유",
+    "stopped": "공유를 멈췄습니다. 전에 공유한 전투는 a2tools.app에서 삭제되고 있습니다."
+  },
+  "privacy": {
+    "title": "개인정보",
+    "intro": "이 미터가 a2tools.app과 공유하는 것. 모두 직접 선택할 수 있습니다.",
+    "share": "익명으로 보스 전투 공유",
+    "shareHint": "보스 전투가 끝나면 a2tools.app의 공개 로그와 리더보드에 올라갑니다. 내 이름을 포함해 모든 이름이 가려집니다. 계정은 필요 없습니다.",
+    "signedIn": "로그인됨: 보스 전투는 A2 Tools 계정으로 업로드됩니다(A2 Tools 계정 참고).",
+    "never": "절대 전송되지 않음: 채팅, PC 이름, 캐릭터의 전체 이름. 개발자에게 로그 보내기(고급)는 직접 누를 때만 로그를 보냅니다.",
+    "policy": "개인정보 처리방침 전문"
+  },
+  "changelog": {
+    "title": "새 소식",
+    "intro": "최근 릴리스입니다. 최신순으로 표시됩니다.",
+    "allReleases": "GitHub에서 모든 릴리스 보기",
+    "installed": "설치됨",
+    "available": "업데이트 가능",
+    "loading": "릴리스 노트를 불러오는 중…",
+    "none": "아직 릴리스 노트가 없습니다.",
+    "failed": "릴리스 노트를 불러오지 못했습니다. 아래 GitHub에서도 볼 수 있습니다."
+  },
+  "footerMenu": {
+    "tip": "하단에 표시할 항목을 고릅니다",
+    "ttk": "예상 처치 시간",
+    "partyTotal": "파티 합계",
+    "odyle": "오드 에너지",
+    "ping": "핑"
   }
 }

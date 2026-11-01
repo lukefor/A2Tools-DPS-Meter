@@ -2,10 +2,13 @@
 //! the router's through SSH (`router_capture`). Settings switches between them
 //! while the meter runs.
 
+use std::sync::Arc;
+
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
 use super::captured_payload::CapturedPayload;
+use super::combat_port_detector::CombatPortDetector;
 use super::pcap_capturer::PcapCapturer;
 use super::router_capture::{RouterCapture, RouterTarget};
 
@@ -18,12 +21,19 @@ enum Source {
 
 pub struct LiveCapture {
     sender: mpsc::Sender<CapturedPayload>,
+    port_detector: Arc<CombatPortDetector>,
     source: Mutex<Source>,
 }
 
 impl LiveCapture {
-    pub fn new(sender: mpsc::Sender<CapturedPayload>) -> Self {
-        Self { sender, source: Mutex::new(Source::None) }
+    pub fn new(sender: mpsc::Sender<CapturedPayload>, port_detector: Arc<CombatPortDetector>) -> Self {
+        Self { sender, port_detector, source: Mutex::new(Source::None) }
+    }
+
+    /// A capturer on this machine that has not started, for the Npcap
+    /// installer to start once Npcap is in (`npcap_setup::offer`).
+    pub fn unstarted_local(&self) -> PcapCapturer {
+        PcapCapturer::new(self.sender.clone(), self.port_detector.clone())
     }
 
     /// Capture on `router`, or on this machine when it is `None`. Returns
@@ -41,7 +51,7 @@ impl LiveCapture {
                 true
             }
             None if crate::platform::pcap::library_available() => {
-                let pcap = PcapCapturer::new(self.sender.clone());
+                let pcap = self.unstarted_local();
                 pcap.start();
                 *source = Source::Local(pcap);
                 true

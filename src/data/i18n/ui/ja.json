@@ -4,10 +4,43 @@
     "display": {
       "dps": "DPS",
       "total": "ダメージ",
+      "damageReceived": "被ダメ",
       "ariaDps": "DPSを表示中",
       "ariaDamage": "総ダメージを表示中",
-      "both": "両方",
-      "ariaBoth": "DPSと総ダメージを表示中"
+      "ariaDamageReceived": "被ダメージを表示中",
+      "hps": "HPS",
+      "totalHeal": "HEAL",
+      "stagger": "スタン",
+      "ariaHps": "秒間回復量を表示中",
+      "ariaHeal": "総回復量を表示中",
+      "ariaStagger": "ボスのスタンゲージに与えた量を表示",
+      "names": {
+        "dps": "秒間ダメージ",
+        "totalDamage": "総ダメージ",
+        "damageReceived": "被ダメージ",
+        "hps": "秒間回復量",
+        "totalHeal": "総回復量",
+        "stagger": "スタン",
+        "bossStagger": "ボスのスタン %",
+        "statColours": "項目の色分け",
+        "deaths": "死亡回数"
+      },
+      "sortBy": "この項目で並べ替え",
+      "menuTip": "行に表示する項目を選びます。ホイールまたは右クリック：次の項目",
+      "bossStaggerTip": "ボスのスタンゲージの減り具合をHPバーに表示します",
+      "sortCol": "並べ替え",
+      "showCol": "表示",
+      "statColoursTip": "各項目を行・メニュー・ボタンでそれぞれの色で表示します"
+    },
+    "updates": {
+      "meter": "A2Tools DPS Meter {version} にアップデートできます",
+      "plugins": "プラグインのアップデート: {list}"
+    },
+    "targetMode": {
+      "lastHitByMe": "最後に攻撃した敵",
+      "bossTargets": "ボスのみ",
+      "trainTargets": "訓練用カカシ",
+      "allTargets": "すべての敵の合計"
     }
   },
   "details": {
@@ -63,8 +96,18 @@
       "backTooltip": "バックアタック %",
       "frontal": "正面",
       "frontalTooltip": "正面 %",
-      "powershard": "PS",
-      "powershardTooltip": "パワーシャード %",
+      "shieldBlock": "盾",
+      "shieldBlockTooltip": "盾ブロック %",
+      "perfectBlock": "完防",
+      "perfectBlockTooltip": "完璧ブロック %",
+      "ironWall": "鉄壁",
+      "ironWallTooltip": "鉄壁 %",
+      "regeneration": "再生",
+      "regenerationTooltip": "再生 %",
+      "miss": "ミス",
+      "missTooltip": "ミス",
+      "resist": "抵抗",
+      "resistTooltip": "抵抗",
       "regen": "回復",
       "regenTooltip": "ライフスティール回復",
       "multiHit": "多段%",
@@ -76,7 +119,18 @@
       "avgDmg": "平均",
       "avgDmgTooltip": "平均ダメージ",
       "maxDmg": "最大",
-      "maxDmgTooltip": "最大ダメージ"
+      "maxDmgTooltip": "最大ダメージ",
+      "heal": "回復",
+      "healTooltip": "回復量",
+      "healPct": "回復%",
+      "healPctTooltip": "回復量 %"
+    },
+    "peak": {
+      "label": "パーティーリスト",
+      "show": "平均の横に最大DPS（最高の5秒）を表示"
+    },
+    "party": {
+      "activeDps": "攻撃時間DPS: {dps}（戦闘 {total} 中 {active}）"
     },
     "stats": {
       "totalDamage": "総ダメージ",
@@ -91,7 +145,17 @@
       "selfHealing": "自己回復",
       "multiHitDamage": "多段ヒットのダメージ",
       "multiHitHits": "多段ヒット",
-      "maxHp": "最大HP"
+      "maxHp": "最大HP",
+      "damageReceived": "被ダメージ",
+      "deaths": "死亡回数",
+      "avgDps": "平均DPS",
+      "peakDps": "最大DPS",
+      "peakDpsTip": "戦闘中の任意の5秒間で最も高いDPS",
+      "blockedTaken": "ブロック（完璧）",
+      "blockedTakenTip": "受けた攻撃のうち、盾でブロックした割合。括弧内は完璧ブロック",
+      "parriedTaken": "パリィ（完璧）",
+      "parriedTakenTip": "受けた攻撃のうち、パリィした割合。括弧内は完璧パリィ",
+      "parryRateTip": "自分の攻撃のうち、対象にパリィされた割合"
     },
     "titleFor": "対象",
     "titleVs": "対",
@@ -100,9 +164,100 @@
     "history": {
       "allPlayers": "全プレイヤー"
     },
-    "dpsChart": "DPSチャート",
+    "dpsChart": "秒間ダメージ",
     "historyBtn": "履歴",
-    "timeline": "タイムライン"
+    "timeline": "タイムライン",
+    "buffs": {
+      "title": "バフ",
+      "castByLabel": "付与者",
+      "casterAll": "全員",
+      "casterParty": "パーティ",
+      "casterSelf": "自分",
+      "sortLabel": "並び順",
+      "sortUptime": "維持率",
+      "sortFirst": "付与順",
+      "showPassives": "パッシブ",
+      "passives": "パッシブ",
+      "uptime": "維持",
+      "onTarget": "対象のデバフ",
+      "selectPlayer": "上でプレイヤーを選ぶとバフが表示されます。",
+      "noneShown": "この条件に合うものはありません。",
+      "none": "この戦闘ではバフ・デバフが検出されませんでした。",
+      "older": "この戦闘にはバフのデータがありません（旧バージョンで記録）。",
+      "loading": "読み込み中...",
+      "unknownCaster": "不明",
+      "summonTag": "召喚",
+      "castBy": "付与者: {name}",
+      "stacks": "スタック: {n}",
+      "ended": "終了: {reason}",
+      "beforePull": "戦闘開始前から付与",
+      "end": {
+        "stacks": "スタック変化",
+        "expired": "時間切れ",
+        "takenOff": "スキルで解除",
+        "removed": "解除（理由不明）",
+        "recast": "別の付与者がかけ直し",
+        "gone": "対象が死亡または離脱",
+        "mapLoad": "マップ移動",
+        "notListed": "終了を確認できず",
+        "pushedOut": "新しいスタックに押し出し",
+        "unseen": "時間切れ（終了未確認）",
+        "stillOn": "戦闘終了時も継続",
+        "replaced": "新しいレベルに置き換え"
+      }
+    },
+    "stagger": {
+      "title": "スタン",
+      "unknownActor": "不明",
+      "unknownSkill": "不明なスキル",
+      "older": "この戦闘にはスタンデータがありません（以前のバージョンで記録）。",
+      "loading": "読み込み中...",
+      "none": "この戦闘で削られたスタンゲージはありません。",
+      "incomplete": "開始値が見えませんでした：それ以前のスタンは含まれていません。",
+      "ambiguous": "他のプレイヤーのものかもしれません：同時に別の人が攻撃しました。",
+      "ambiguousCount": "{n}回の攻撃が他のプレイヤーのものかもしれません。",
+      "value": "スタン {n}",
+      "ended": {
+        "break": "{secs}秒でブレイク",
+        "reset": "失敗：{max}中{missing}残り",
+        "death": "ブレイク前に撃破：{max}中{missing}残り",
+        "despawn": "ブレイク前に消滅：{max}中{missing}残り",
+        "fightEnd": "戦闘終了時に進行中：{max}中{missing}残り"
+      }
+    },
+    "fightTimeline": "戦闘タイムライン",
+    "replay": {
+      "label": "リプレイ",
+      "title": "リプレイ",
+      "play": "リプレイを再生",
+      "pause": "一時停止",
+      "speed": "再生速度",
+      "position": "リプレイの位置",
+      "positionText": "{at} / {total}",
+      "exit": "リプレイを終了（戦闘全体を表示）",
+      "wholeFightNote": "被ダメージ、最小 / 最大、バフ持続率は戦闘全体の値です。",
+      "moreSkills": "他 {n} 件、一時停止で表示",
+      "noHealTiming": "この戦闘の回復には時刻がありません（旧バージョンで保存）。戦闘全体の値を表示します。",
+      "unavailable": "この戦闘はヒット時刻なしで保存されたため、リプレイできません"
+    },
+    "casts": "詠唱",
+    "resize": "ドラッグでサイズ変更",
+    "healTimingNote": "この戦闘には回復のタイミングがありません（古いバージョンで記録）。",
+    "chart": {
+      "bossHp": "ボスHP",
+      "ping": "Ping",
+      "death": "死亡",
+      "died": "死亡時刻",
+      "downFor": "戦闘不能"
+    },
+    "hpsChart": "秒間回復量",
+    "sectionChart": "グラフ",
+    "showSections": "表示する項目",
+    "hoverTooltip": {
+      "loading": "読み込み中...",
+      "empty": "この戦闘のスキルデータはありません",
+      "error": "スキルを読み込めませんでした"
+    }
   },
   "history": {
     "title": "戦闘履歴",
@@ -121,30 +276,78 @@
     "viewDungeon": "ダンジョン別",
     "viewGrouped": "ボスごとにまとめる",
     "fightCount": "{n} 戦",
+    "best": "最速 {time}",
+    "top": "最大 {damage}",
+    "showAll": "全{n}件を表示",
+    "showFewer": "折りたたむ",
+    "expandAll": "すべて展開",
+    "collapseAll": "すべて折りたたむ",
+    "training": "訓練",
     "fightCountOne": "1 戦",
     "previewUpload": "アップロードのプレビュー",
     "previewUploadTip": "この戦闘を共有した場合に送信される内容を書き出します。送信はされません。",
     "previewWorking": "プレビューを作成中…",
     "previewDone": "{slice} KB を書き出しました（圧縮後 {sent} KB — 実際に送信されるサイズ）。{seen} 個中 {kept} 個のパケットを保持し、{blinded} 件の名前を伏せました。何もアップロードされていません。保存先: {dir}",
-    "openWorld": "フィールド"
+    "openWorld": "フィールド",
+    "tabFights": "戦闘",
+    "tabBests": "自己ベスト",
+    "search": "ボスまたはダンジョン…",
+    "allCharacters": "すべてのキャラクター",
+    "allDifficulties": "すべての難易度",
+    "periodAll": "全期間",
+    "periodToday": "直近24時間",
+    "period7": "直近7日",
+    "period30": "直近30日",
+    "sort": "並べ替え",
+    "sortNewest": "新しい順",
+    "sortFastest": "最速討伐",
+    "sortPartyDps": "パーティーDPS",
+    "sortMyDps": "自分のDPS",
+    "sortRecent": "新しい順",
+    "sortTier": "ダンジョン階層順",
+    "killsOnly": "討伐のみ",
+    "wipe": "全滅",
+    "pb": "ベスト",
+    "pbTip": "自己ベストのひとつ",
+    "party": "パーティー",
+    "you": "自分",
+    "totalDamage": "総ダメージ",
+    "finalBoss": "最終ボス",
+    "fightGone": "この戦闘はもう保存されていませんが、記録は残っています。",
+    "unconfirmedTip": "討伐が記録されていません（2.0.87より前の戦闘）。与えたダメージから判断しています。",
+    "openBest": "この戦闘を開く",
+    "killOne": "討伐 1回",
+    "wipeOne": "全滅 1回",
+    "kills": "討伐 {n}回",
+    "wipes": "全滅 {n}回",
+    "otherBosses": "ほかのボス（{n}）",
+    "otherLevels": "ほかのレベル（{n}）",
+    "noBests": "まだダンジョンの討伐はありません。",
+    "encounter": "対象",
+    "fastestKill": "最速討伐",
+    "yourBest": "自分のベストDPS",
+    "partyBest": "パーティーのベスト",
+    "uploadTip": "この戦闘を a2tools.app にアップロードして共有リンクを取得",
+    "uploadOpen": "この戦闘のログを a2tools.app で開く",
+    "uploadWorking": "アップロード中…",
+    "uploadDonePublic": "アップロードしました。リンクをコピーしました: {url}",
+    "uploadDonePrivate": "非公開でアップロードしました。リンクをコピーしました: {url}"
   },
   "settings": {
     "title": "設定",
-    "lockedPort": "検出されたデバイス/ポート",
-    "resetDetection": "リセット",
-    "characterName": "名前#ID",
+    "lockedPort": "検出された接続",
+    "resetDetection": "再検出",
+    "characterName": "自分のキャラクター",
     "characterNamePlaceholder": "キャラクター名を入力",
-    "pinMeToTop": "常に自分を一番上に表示",
+    "pinMeToTop": "自分の行を常に一番上に",
     "slimMode": "スリムモード",
     "meterLayout": {
       "label": "メーターのレイアウト",
-      "beta": "Beta UI",
-      "betaSlim": "ベータ スリム",
-      "classic": "クラシックUI",
-      "classicSlim": "クラシック スリム"
+      "standard": "標準",
+      "slim": "スリム"
     },
     "detailsMonitor": {
-      "label": "詳細を表示するモニター",
+      "label": "詳細をサブモニターに表示",
       "off": "オフ",
       "primary": "プライマリ",
       "missing": "そのディスプレイは接続されていません。",
@@ -161,12 +364,12 @@
     "connection": "接続",
     "diagnostics": "診断",
     "device": {
-      "label": "キャプチャデバイス",
+      "label": "ネットワークアダプター",
       "autoDetect": "自動検出"
     },
     "advanced": "詳細設定",
     "bossLogs": "ボスごとのログを有効にする",
-    "saveRawPackets": "パケットログを有効にする",
+    "saveRawPackets": "パケットログ",
     "resetAllSettings": "すべての設定をリセット",
     "bold": {
       "label": "太字",
@@ -174,26 +377,72 @@
       "dps": "DPS"
     },
     "showPing": "pingを表示",
-    "showTotalDps": "合計DPS/ダメージを表示",
-    "roundDps": "DPSを丸める",
-    "autoHideMeter": "メーターを自動的に隠す",
-    "showSuspendBtn": "一時停止ボタンを表示",
-    "showLockBtn": "ロックボタンを表示（クリック透過）",
+    "showOdyle": "オードエネルギーを表示",
+    "odyleEnergy": "オードエネルギー",
+    "showTtk": "撃破時間の予測を表示",
+    "showTotalDps": "パーティ合計を表示",
+    "roundDps": "DPSを千単位で表示 (13k)",
+    "showDpsSuffix": "DPSに /s を付ける",
+    "autoHideMeter": "AION2が非アクティブのとき隠す",
+    "hideWhenGameClosed": "AION2が閉じているときは隠す",
+    "hideWhenSolo": "パーティー中のみ表示",
+    "hideOutOfCombat": {
+      "label": "戦闘外で隠す",
+      "off": "オフ",
+      "seconds": "{seconds}秒後"
+    },
+    "showSuspendBtn": "キャプチャ一時停止ボタンを表示",
+    "showLockBtn": "クリック透過ロックボタンを表示",
     "playerLimit": {
       "label": "表示する最大プレイヤー数"
     },
-    "debugLogging": "デバッグログを有効にする",
+    "partyPresence": "パーティーのA2Tools利用者を表示",
+    "debugLogging": "デバッグログ",
     "quit": "終了",
     "discord": {
       "title": "Discord",
       "activity": "Discord にプレイ中の内容を表示",
-      "activityHint": "AION2 の起動中、Discord のステータスにキャラクター名、クラス、レベル、サーバー、戦闘中のボスを表示します。このパソコンの Discord アプリ経由で表示され、アカウントは不要です。"
+      "activityHint": "AION2 の起動中、Discord のステータスにキャラクター名、クラス、レベル、サーバー、戦闘中のボスを表示します。このパソコンの Discord アプリ経由で表示され、アカウントは不要です。 Discord に表示する数値を選ぶと、戦闘力または装備スコアも表示します。",
+      "stat": "Discord に表示する数値",
+      "statHint": "Discord のステータスでレベルの後に表示する数値です。"
+    },
+    "streamOverlay": {
+      "title": "配信",
+      "enable": "配信オーバーレイ（別PCのOBS用）",
+      "enableHint": "メーターをローカルネットワークで公開し、別PCのOBSでブラウザソースとして表示できるようにします。",
+      "port": "ポート",
+      "url": "ブラウザソースのURL",
+      "copy": "コピー",
+      "copied": "コピーしました",
+      "newKey": "新しいキー",
+      "help": "別PCのOBSで、このURLのブラウザソースを追加してください。初回はWindowsファイアウォールが確認を求めるので、プライベートネットワークで許可してください。リンクを知っている同じネットワーク内の誰でもメーターを見られます。「新しいキー」で古いリンクは無効になります。",
+      "noAddress": "ネットワークアドレスが見つかりません。このPCはネットワークに接続されていますか？",
+      "portInvalid": "1024〜65535のポートを入力してください。",
+      "error": "オーバーレイを開始できませんでした: {error}",
+      "waiting": "戦闘を待っています…",
+      "reconnecting": "メーターに再接続中…",
+      "player": "プレイヤー",
+      "displayName": "配信での名前",
+      "displayNamePlaceholder": "キャラクター名"
     },
     "version": "バージョン",
+    "update": {
+      "check": "アップデートを確認",
+      "checking": "確認中…",
+      "current": "最新です",
+      "installing": "アップデート中…",
+      "available": "{version} が出ています",
+      "failed": "確認できませんでした。後でもう一度お試しください。"
+    },
     "theme": {
-      "label": "テーマ",
+      "label": "カラーテーマ",
       "options": {
         "aion2": "AION2",
+        "aion2Classes": "AION2（クラス色）",
+        "aion2ClassesVivid": "AION2（クラス色・鮮やか）",
+        "aion2Spectrum": "スペクトル",
+        "aion2Aurora": "オーロラ",
+        "aion2Sunset": "夕焼け",
         "asmodian": "Asmodian",
         "cogni": "Cogni",
         "elyos": "Elyos",
@@ -205,27 +454,85 @@
         "varian": "Varian"
       }
     },
+    "settingsTheme": {
+      "label": "設定画面の色",
+      "tip": "この設定ウィンドウの色です。メーターは自身のテーマのままです。",
+      "options": {
+        "meter": "メーターのテーマ",
+        "midnight": "ミッドナイト",
+        "graphite": "グラファイト",
+        "violet": "バイオレット",
+        "forest": "フォレスト",
+        "crimson": "クリムゾン",
+        "ocean": "オーシャン",
+        "sapphire": "サファイア",
+        "indigo": "インディゴ",
+        "rose": "ローズ",
+        "sunset": "サンセット",
+        "amber": "アンバー",
+        "copper": "カッパー",
+        "lime": "ライム",
+        "ice": "アイス",
+        "slate": "スレート",
+        "onyx": "オニキス"
+      }
+    },
+    "font": {
+      "label": "フォント",
+      "tip": "メーター、設定、戦闘履歴、詳細のフォントです。",
+      "options": {
+        "meter": "メーターのフォント",
+        "system": "システムフォント",
+        "inter": "Inter",
+        "exo2": "Exo 2",
+        "oxanium": "Oxanium",
+        "jetbrains": "JetBrains Mono (数字の幅がそろう)",
+        "atkinson": "Atkinson Hyperlegible (文字と数字が見分けやすい)",
+        "lexend": "Lexend (読みやすさ重視)",
+        "andika": "Andika (ディスレクシア向け)"
+      }
+    },
+    "textureOffset": "テクスチャをずらす",
+    "barTexture": {
+      "label": "バーの質感",
+      "supportersOnly": "サポーター限定：上の A2 Tools アカウントでログインすると使えます。",
+      "options": {
+        "none": "なし",
+        "flames": "炎",
+        "crystal": "霜の結晶",
+        "glacier": "氷河",
+        "feathers": "羽根",
+        "wing": "翼",
+        "storm": "嵐",
+        "nebula": "星雲",
+        "galaxy": "銀河",
+        "aura": "オーラ"
+      }
+    },
+    "appearanceGroups": {
+      "general": "全般",
+      "colours": "色",
+      "layout": "レイアウト",
+      "opacity": "不透明度"
+    },
     "language": {
       "label": "言語"
     },
     "windowOpacity": {
-      "label": "メインウィンドウの不透明度"
+      "label": "背景の不透明度"
+    },
+    "titleOpacity": {
+      "label": "タイトルバーの不透明度"
     },
     "meterOpacity": {
-      "label": "メーターバーの不透明度"
+      "label": "バーの不透明度"
+    },
+    "barPreview": "プレビュー",
+    "meterSaturation": {
+      "label": "バーの色の濃さ"
     },
     "bossNameSize": {
-      "label": "ターゲット名のサイズ"
-    },
-    "targetWindow": {
-      "label": "ターゲットの時間範囲",
-      "options": {
-        "5s": "5秒",
-        "10s": "10秒",
-        "15s": "15秒",
-        "20s": "20秒",
-        "30s": "30秒"
-      }
+      "label": "タイトルの大きさ"
     },
     "targetSelection": {
       "label": "ターゲット選択（実験的）",
@@ -236,8 +543,17 @@
         "allTargets": "全ターゲット合算"
       }
     },
+    "updateRate": {
+      "label": "メーター更新間隔",
+      "options": {
+        "100": "0.1秒",
+        "200": "0.2秒（既定）",
+        "250": "0.25秒",
+        "500": "0.5秒"
+      }
+    },
     "allTargetsWindow": {
-      "label": "全ターゲットの時間範囲",
+      "label": "全ターゲットの集計時間",
       "options": {
         "30s": "30秒",
         "1m": "1分",
@@ -252,14 +568,28 @@
       "reload": "データを再読み込み",
       "toggle": "ウィンドウの表示/非表示",
       "pressKeys": "キーを押してください...",
-      "needModifiers": "修飾キーが2つ以上必要です",
-      "lock": "オーバーレイのロック/解除"
+      "tooManyKeys": "キーは3つまで",
+      "plugins": "プラグインのウィンドウを呼び戻す",
+      "notSet": "未設定",
+      "restoreDefaults": "初期設定に戻す",
+      "hint": "キーバインドをクリックし、1〜3個のキーを押してください。Escでキャンセル。",
+      "lock": "オーバーレイのロック/解除",
+      "openDesktop": "デスクトップのショートカット"
     },
     "defaultMeterMode": {
-      "label": "デフォルトのモード"
+      "label": "起動時のターゲットモード"
+    },
+    "partyStat": {
+      "label": "プレイヤー名の横",
+      "options": {
+        "combatPower": "戦闘力",
+        "gearScore": "装備スコア",
+        "both": "両方",
+        "off": "オフ"
+      }
     },
     "trainingMode": {
-      "label": "訓練モードの対象",
+      "label": "トレーニングモードの詳細",
       "options": {
         "all": "すべて",
         "highestDamage": "最大ダメージ"
@@ -278,20 +608,170 @@
       "codeHint": "ページはすでに開いているはずです。コードは10分で期限切れになります。",
       "working": "承認を待っています…",
       "failed": "サインインに失敗しました: {error}",
-      "supporter": "サポーター"
+      "supporter": "サポーター",
+      "guestUpload": "アカウントなしでボス戦をアップロード",
+      "guestUploadHint": "ボス戦が終わると、アカウントなしで公開としてa2tools.appにアップロードされます。他のプレイヤーは伏せられます。あとでログインすると、このPCからアップロードした戦闘はあなたのものになります。",
+      "guestClaimHint": "このPCからアップロードした戦闘は保管されています。ここでログインして自分のものにするか、コードを取得して別の端末から引き継げます。",
+      "guestClaimButton": "引き継ぎコードを取得",
+      "guestClaimCode": "ログインした状態で {url} に {code} を入力してください。コードは15分で無効になります。",
+      "claimed": "このPCからアップロードした {count} 件の戦闘があなたのものになりました。",
+      "autoUpload": "ボス戦を自動でアップロード",
+      "autoUploadHint": "ボス戦が終わると、a2tools.app で選んだ公開範囲でアカウントにアップロードされます。他のプレイヤーは伏せられます。訓練用人形との戦闘はアップロードされません。"
     },
     "sendLogs": {
-      "hint": "不具合報告のため、最新のパケットログ3件を開発者に送ります。",
+      "hint": "デバッグログと最新のパケットログ（合計3ファイル）を、不具合報告として開発者に送信します。",
       "button": "開発者にログを送る",
-      "confirm": "最新のパケットログ3件を A2 Tools の開発者に送りますか？\n\nパケットログは、パケット記録をオンにしていた間のゲーム通信そのもので、キャラクター名が含まれます。開くことができるのは開発者だけで、30日後に削除されます。",
+      "confirm": "デバッグログと最新のパケットログをA2 Toolsの開発者に送信しますか？\n\nデバッグログにはメーターの動作が記録されています。パケットログは、パケットログがオンの間に記録されたゲームの生の通信です。どちらにもキャラクター名が含まれる場合があります。開けるのは開発者だけで、30日後に削除されます。",
       "sending": "送信中...",
       "sent": "送信しました。報告コードは {code} です。Discord で開発者に伝えてください。",
-      "failed": "送信できませんでした: {error}"
+      "failed": "送信できませんでした: {error}",
+      "files": "送信されるファイル：",
+      "contents": "パケットログにはチャットや他のプレイヤーの名前が含まれることがあります。"
+    },
+    "barGap": {
+      "label": "バーの間隔"
+    },
+    "debugLoggingLocked": "パケットログがオンの間はオンのままです。パケットログの解析にはデバッグログが必要です。",
+    "tips": {
+      "showOdyle": "メーターの下に、ゲームと同じ形式でオードエネルギーを表示します: 基本 (+チャージ)。ログイン時、サーバー移動後、エネルギーの変化時に更新されます。それまでは (メーターの再起動後など)、最後に確認した値が薄く表示されます。",
+      "characterName": "どの行が自分かをメーターが判別するためのゲーム内の名前とIDです。通常は自動で見つかります。",
+      "device": "メーターがゲームの通信を読み取るネットワーク接続です。自動検出で見つかります。VPN使用時は手動で選んでください。",
+      "lockedPort": "ゲームが見つかったアダプターとポートです。",
+      "defaultMeterMode": "メーター起動時のターゲットモード：ボス、ターゲット、トレーニング、全体。",
+      "playerLimit": "メーターに表示するプレイヤー行の数です。残りは表示しません。",
+      "pinMeToTop": "ダメージに関係なく、自分の行が常に一番上になります。",
+      "autoHideMeter": "別のウィンドウがゲームの前にあるとメーターが消え、ゲームに戻ると再び表示されます。",
+      "detailsMonitor": "選んだディスプレイで詳細ウィンドウを開き、そこに表示し続けます。",
+      "showTtk": "戦闘タイマーの横に、ボス戦全体にかかる時間の予測を表示します。",
+      "showTotalDps": "行の下に、パーティ全体のDPSとダメージを示すバーを表示します。",
+      "roundDps": "13,412 は 13k と表示されます。",
+      "showSuspendBtn": "押すとゲーム通信の読み取りを止め、もう一度押すと再開するボタンをメーターに表示します。",
+      "showLockBtn": "メーターがマウスを無視し、クリックがゲームに届くようにするボタンです。",
+      "windowOpacity": "メーター背景の透け具合です。バーと文字はそのままです。",
+      "titleOpacity": "メーターのタイトルバーの透け具合を、下の背景とは別に設定します。動かすまでは背景の不透明度に合わせます。",
+      "meterOpacity": "色付きのダメージバーの不透明度です。",
+      "meterSaturation": "バーの色の強さです。下げると柔らかく、上げるとより鮮やかになります。",
+      "bossNameSize": "バーの上にあるボスまたはターゲット名の大きさです。",
+      "partyStat": "メーターと詳細で各プレイヤー名の横に表示する数値。自分のパーティのメンバーにのみ表示されます。",
+      "barTexture": "メーターのバーに模様を付けます。A2 Tools を支援してくださった方へのお礼です。",
+      "textureOffset": "バーごとにテクスチャの開始位置を変え、どのバーも同じに見えないようにします。",
+      "trainingMode": "トレーニングモードで詳細ウィンドウに表示するかかしです：すべてまとめて、または一番多く攻撃した1体だけ。",
+      "allTargetsWindow": "全ターゲットモードで、最後のヒットからこの時間内に攻撃したすべての対象を合計します。",
+      "updateRate": "メーターの数値を更新する間隔です。速いほどダメージが早く表示されますが、CPU 使用量が増えます。",
+      "partyPresence": "A2Toolsを使うパーティーメンバーにはあなたの名前の横に小さなA2タグが見え、あなたにも相手のタグが見えます。A2Toolsを使うパーティーメンバーなら誰でも見えるため、外部メーターを使っていることが分かります。送るのはキャラクター名とサーバーのハッシュだけです。",
+      "debugLogging": "開発者が問題を調べるための診断ログを書き出します。",
+      "saveRawPackets": "バグ報告用にゲームの生の通信を記録します。デバッグログも一緒にオンになります。",
+      "globalHotkeys": "下のキーはゲームが前面にあるときも使えます。オフにすると、ほかのプログラムがこれらのキーを使えます。Linux ではデスクトップがキーを登録し、承認を求めることがあります。",
+      "pluginDevMode": "このPCのフォルダーからプラグインを読み込み、作成やテストに使います。審査されていないので、信頼できるものだけを読み込んでください。",
+      "showMeter": "オフ：プラグインだけが表示されます。メーターはバックグラウンドで戦闘の記録とアップロードを続けます。ここ、表示/非表示のホットキー、またはプラグインウィンドウのメーターボタンで元に戻せます。",
+      "clearOnZone": "ゾーンが変わったあと、最後の戦闘をメーターから消すタイミング。どの戦闘も履歴には残ります。",
+      "hideWhenGameClosed": "ゲームが起動していない間はメーターを隠し、起動すると再び表示します。",
+      "hideWhenSolo": "パーティーに入っていない間はメーターを隠し、パーティーに参加すると再び表示します。表示/非表示のキー設定でいつでも表示できます。",
+      "hideOutOfCombat": "戦闘が終わってこの時間が経つとメーターを隠し、次の攻撃で再び表示します。設定・履歴・詳細ウィンドウが開いている間や、マウスがメーターの上にある間は隠しません。",
+      "runAsAdmin": "ゲームのフレームレートを表示するのに必要です。メーターを起動するたびにWindowsが確認します。",
+      "shareData": "サーバーのフィールドボスのタイマーと補給依頼をa2tools.appと共有し、みんなのA2Toolsを最新に保ちます。マップ上のボス、倒されるのを見たボスとそのHP、リセット後の依頼ボードが送られます。キャラクターの情報は送られません。",
+      "pluginAutoUpdate": "メーターの起動時に、プラグインの更新がバックグラウンドで自動的にインストールされます。新しい権限を求める更新は、引き続き確認を待ちます。",
+      "meterAnchor": "行が増減しても動かないメーターの端です。"
+    },
+    "globalHotkeys": "キー操作を使う",
+    "hotkeyConsent": {
+      "title": "キー操作をオンにしますか？",
+      "desktop": "Linux では、デスクトップがメーターのキー操作を設定します。承認を求められることがあります。",
+      "anytime": "キー操作はいつでもオフにできます。",
+      "confirm": "オンにする",
+      "cancel": "今はしない"
+    },
+    "keybindTaken": "ほかのプログラムがすでにこのキーを使っています。別のキーを選んでください。",
+    "keybindShared": "別の操作がこのキーを使っています。別のキーを選んでください。",
+    "keybindUnset": "デスクトップがまだキーを割り当てていません。「デスクトップのショートカット」で設定してください。",
+    "keybindAssigned": "デスクトップでは {key} が使われています。「デスクトップのショートカット」で変更できます。",
+    "plugins": {
+      "title": "プラグイン",
+      "devMode": "プラグイン開発者モード",
+      "hint": "ここで読み込むプラグインは審査されていません。信頼できるものだけを読み込んでください。",
+      "add": "プラグインのフォルダーを読み込む…",
+      "open": "開く",
+      "remove": "削除",
+      "checkUpdates": "アップデートを確認",
+      "checking": "確認中…",
+      "upToDate": "すべてのプラグインは最新です。",
+      "updated": "更新しました: {list}",
+      "updatedFrom": "{version} から更新",
+      "added": "新しく読み込み",
+      "intro": "審査済みのプラグインはメーターに機能を追加します。各プラグインはインストール時に求めたものだけを使えます。",
+      "installed": "インストール済み",
+      "none": "まだプラグインはインストールされていません。",
+      "available": "利用可能",
+      "catalogLoading": "プラグイン一覧を読み込み中…",
+      "catalogEmpty": "審査済みのプラグインはすべてインストール済みです。",
+      "catalogError": "プラグイン一覧を読み込めませんでした: {error}",
+      "offline": "オフライン版はプラグインをダウンロードしません。",
+      "install": "インストール",
+      "update": "更新",
+      "updateTo": "{version} に更新",
+      "downloading": "ダウンロード中…",
+      "installing": "インストール中…",
+      "installDone": "{name} {version} をインストールしました。",
+      "updatesAvailable": "アップデートがあります: {list}",
+      "unreviewed": "開発",
+      "by": "作成: {author}",
+      "consentTitle": "{name} をインストールしますか？",
+      "consentUpdateTitle": "{name} を更新しますか？",
+      "consentIntro": "このプラグインができること:",
+      "consentNew": "新しいバージョンは次も求めています:",
+      "consentNetwork": "ウェブページと同じく、プラグインもインターネットに接続できる場合があります。",
+      "consentCancel": "キャンセル",
+      "permStorage": "このPCに自身のデータを保存する",
+      "permNotify": "自身のウィンドウに短いメッセージを表示する",
+      "permWindow": "ゲームのフォーカスを奪わずに、自身のウィンドウを表示・非表示にする",
+      "permWidgets": "移動・固定できる小さな専用ウィンドウを表示",
+      "permBossTimers": "a2tools.app でプレイヤーが共有するフィールドボスのタイマーを読む",
+      "permCharacter": "キャラクターの名前・サーバー・クラス・レベルを見る",
+      "permDecoder": "選択したゲームデータを読む（他のプレイヤーの情報を含む場合があります）: {name}",
+      "permNone": "ウィンドウを表示する以外のことはしません",
+      "enabled": "有効",
+      "enabledTip": "オン：メーターと一緒に起動します。オフ：インストールされたままですが、動作しません。",
+      "showMeter": "メーターを表示",
+      "hideClosed": "AION2が閉じているときは隠す",
+      "hideUnfocused": "AION2が非アクティブのとき隠す",
+      "inDock": "プラグインドックに入れる（オフ：専用ウィンドウ）",
+      "search": "検索",
+      "noMatch": "一致するプラグインはありません。",
+      "permsTitle": "できること:",
+      "permFps": "ゲームのフレームレートを表示する（Windowsでは、そのためにメーターが管理者としての実行を求めます）",
+      "permDeathRecap": "プレイヤーに倒された後：相手が誰か、あなたに与えたダメージ",
+      "permScreenshot": "自分のウィンドウのスクリーンショットを撮る（クリップボードとスクリーンショットのフォルダーへ）",
+      "testHint": "誰でも試せる初期版で、ほかと同じく署名されています。変更されたり、粗い部分があったりするかもしれません。気づいたことを教えてください。",
+      "testTitle": "テスト用プラグイン",
+      "autoUpdate": "プラグインを自動で更新",
+      "whatsNew": "{version} の新機能"
+    },
+    "clearOnZone": {
+      "label": "メーターをクリア",
+      "options": {
+        "instance": "ダンジョンへの出入り時",
+        "any": "ゾーンが変わるたび",
+        "never": "しない（最後の戦闘を残す）"
+      }
+    },
+    "runAsAdmin": "管理者として実行",
+    "runAsAdminTitle": "A2Tools - 管理者として実行",
+    "runAsAdminAsk": "ゲームのフレームレートを表示するには、メーターを管理者として実行する必要があります。\n\n今すぐメーターを管理者として再起動しますか？ メーターを起動するたびにWindowsが確認します。設定からオフにできます。",
+    "shareData": "役立つデータをA2Toolsと同期",
+    "meterAnchor": {
+      "label": "メーターの固定位置",
+      "options": {
+        "top": "上",
+        "middle": "中央",
+        "bottom": "下"
+      }
     }
   },
   "support": {
     "button": "支援する",
     "title": "Ko-fiで作者を支援",
+    "linksHint": "Ko-fi・Patreon・爱发电・PayPal はブラウザでそのサイトを開きます。暗号資産のボタンはアドレスをコピーします。",
+    "perks": "5ドルごとにサポーター特典が12か月付与されます（1回の支払いにつき最大2年）。Ko-fiのメッセージにA2 Toolsアカウントページのコードを入れるか、Patreonでは同じメールアドレスを使ってください。",
     "titleWechat": "WeChatで作者を支援",
     "label": {
       "wechat": "WeChat"
@@ -304,24 +784,34 @@
     "aria": {
       "afdian": "Afdianを開く",
       "kofi": "Ko-fiを開く",
+      "patreon": "Patreonを開く",
       "close": "支援ウィンドウを閉じる",
       "wechat": "WeChatのQRコードを表示",
       "paypal": "PayPalを開く",
       "btc": "BTCアドレスをコピー",
       "eth": "ETHアドレスをコピー",
       "usdc": "USDCアドレスをコピー"
-    }
+    },
+    "sponsorLabel": "広告",
+    "sponsorShort": "ExitLagでPingを下げる",
+    "sponsorCode": "コード",
+    "sponsorDisclosure": "アフィリエイトリンクです。ご登録いただくとA2 Toolsに手数料が入り、ツールの無料提供に役立ちます。",
+    "more": "a2tools.appでほかの寄付方法を見る"
   },
   "battleTime": {
-    "analysing": "データを監視中...",
+    "analysing": "監視中",
+    "ttkTooltip": "ボスの残りHPとパーティの与ダメージから予測した戦闘全体の長さ",
     "idle": "待機中",
-    "notRunning": "AION2が起動していません",
-    "suspended": "アプリを一時停止中",
+    "notRunning": "AION2未起動",
+    "suspended": "一時停止中",
     "waitingBoss": "ボス待機中"
   },
   "meter": {
     "identifyingPlayer": "#{id}",
-    "dpsSuffix": "/s"
+    "a2toolsUser": "A2Toolsを使用中",
+    "dpsSuffix": "/s",
+    "others": "その他",
+    "deaths": "この戦闘で{count}回死亡"
   },
   "skills": {
     "fallback": "スキル {code}",
@@ -339,7 +829,7 @@
   },
   "connection": {
     "auto": "自動",
-    "detecting": "AION2の接続を検出中...",
+    "detecting": "接続中...",
     "loopback": "ローカルループバック"
   },
   "target": {
@@ -369,6 +859,8 @@
   },
   "presence": {
     "level": "Lv {level}",
+    "combatPower": "戦闘力 {cp}",
+    "gearScore": "装備スコア {gs}",
     "fighting": "{boss} と戦闘中",
     "inGame": "プレイ中",
     "elyos": "天族",
@@ -378,6 +870,11 @@
     "tierExpedition": "遠征",
     "tierConquestNormal": "征服（ノーマル）",
     "tierConquestHard": "征服（ハード）"
+  },
+  "partyPromo": {
+    "title": "新機能：パーティーのA2Tools利用者を表示",
+    "text": "A2Toolsを使うパーティーメンバーの名前の横に小さなA2タグが付き、相手のメーターではあなたの名前の横にも付きます。",
+    "hint": "A2Toolsを使うパーティーメンバーには、あなたが外部メーターを使っていることが分かります。送るのはキャラクター名とサーバーのハッシュだけです。設定でいつでも変更できます。"
   },
   "discordPromo": {
     "title": "新機能：Discord のステータス表示",
@@ -392,6 +889,88 @@
     "hint": "他のプレイヤーの名前は伏せられ、カカシとの戦闘はアップロードされません。設定からいつでも変更できます。",
     "signIn": "ログイン",
     "later": "後で",
-    "close": "閉じる"
+    "close": "閉じる",
+    "guest": "アカウントなしで",
+    "guestHint": "アカウントがなくても戦闘をアップロードできます。あとでログインすると、あなたのものになります。"
+  },
+  "npcapPrompt": {
+    "ask": "A2Tools DPS Meter がゲームの通信を読み取るには Npcap が必要ですが、Npcap が見つからないか動作していません。\n\n今すぐインストールしますか？メーターが npcap.com から Npcap のインストーラーをダウンロードして開きます。Npcap がインストールされると、メーターは自動でキャプチャを始めます。\n\n自分でインストールする場合は「いいえ」を選び、https://npcap.com/#download からインストールしてください。",
+    "downloadFailed": "Npcap のインストーラーをダウンロードできませんでした（{error}）。\n\nhttps://npcap.com/#download から自分でインストールしてから、メーターを開き直してください。",
+    "stillMissing": "Npcap がまだ動作していません。インストーラーを最後まで進めずに閉じた場合は、https://npcap.com/#download から Npcap をインストールしてから、メーターを開き直してください。"
+  },
+  "pluginUpdatePrompt": {
+    "title": "A2Tools - プラグインの更新",
+    "one": "プラグインの更新があります：",
+    "many": "プラグインの更新があります：",
+    "alsoAsks": "新しいバージョンでは、さらに次のことを求めます：",
+    "updateNow": "今すぐ更新しますか？",
+    "failed": "更新できませんでした："
+  },
+  "pluginDock": {
+    "tabs": "プラグインをタブで表示",
+    "stack": "プラグインを縦に並べる",
+    "fold": "ドックを折りたたむ",
+    "unfold": "ドックを開く",
+    "hideControls": "操作部を隠す",
+    "showControls": "操作部を表示",
+    "popOut": "専用ウィンドウで開く",
+    "pluginSettings": "プラグイン設定",
+    "hide": "隠す（プラグインは動作し続けます）",
+    "close": "ドックを隠す（プラグインは動作し続けます）",
+    "hideMeter": "DPSメーターを隠す",
+    "showMeter": "DPSメーターを表示",
+    "settings": "メーターの設定",
+    "opacity": "背景の不透明度",
+    "failed": "このプラグインを起動できませんでした: {error}"
+  },
+  "sharing": {
+    "title": "ランキング作りに参加しますか？",
+    "sub": "どちらかを選んで始めてください。設定 → プライバシーでいつでも変更できます。",
+    "shareTitle": "匿名で戦闘を共有",
+    "recommended": "おすすめ",
+    "shareText": "ボス戦が、すべての名前を伏せた状態で a2tools.app の公開ログに載ります。アカウントは不要です。",
+    "noTitle": "共有しない",
+    "noText": "戦闘に関する情報はこのPCの外に出ません。",
+    "signInBefore": "自分の名前で戦闘を載せたいですか？",
+    "signIn": "A2 Tools でサインイン",
+    "signInAfter": "それまでに共有した戦闘はアカウントに移ります。",
+    "previewTitle": "共有した戦闘の a2tools.app での見え方",
+    "never": "PCの名前とキャラクターのフルネームは送信されません。",
+    "policy": "プライバシーポリシー",
+    "continue": "続ける"
+  },
+  "sharingNotice": {
+    "title": "あなたの戦闘がランキング作りに役立っています",
+    "text": "終えたボス戦は、あなたの名前も含めすべての名前を伏せて（例：Na***a）a2tools.app に共有されます。アカウントは不要で、設定 → プライバシーでいつでも止められます。",
+    "stop": "共有をやめる",
+    "details": "詳細",
+    "keep": "共有を続ける",
+    "stopped": "共有を停止しました。これまでに共有した戦闘は a2tools.app から削除されています。"
+  },
+  "privacy": {
+    "title": "プライバシー",
+    "intro": "このメーターが a2tools.app と共有するもの。どれも自分で選べます。",
+    "share": "匿名でボス戦を共有",
+    "shareHint": "ボス戦が終わると a2tools.app の公開ログとランキングに載ります。あなたの名前も含め、すべての名前が伏せられます。アカウントは不要です。",
+    "signedIn": "サインイン中：ボス戦は A2 Tools アカウントにアップロードされます（A2 Tools アカウントを参照）。",
+    "never": "送信しないもの：チャット、PCの名前、キャラクターのフルネーム。開発者にログを送信（詳細設定）は押したときだけログを送ります。",
+    "policy": "プライバシーポリシー全文"
+  },
+  "changelog": {
+    "title": "新着情報",
+    "intro": "最新のリリースを新しい順に表示します。",
+    "allReleases": "GitHub ですべてのリリースを見る",
+    "installed": "インストール済み",
+    "available": "アップデートあり",
+    "loading": "リリースノートを読み込み中…",
+    "none": "リリースノートはまだありません。",
+    "failed": "リリースノートを読み込めませんでした。下の GitHub でも見られます。"
+  },
+  "footerMenu": {
+    "tip": "フッターに表示する項目を選びます",
+    "ttk": "撃破時間の予測",
+    "partyTotal": "パーティ合計",
+    "odyle": "オードエネルギー",
+    "ping": "ping"
   }
 }

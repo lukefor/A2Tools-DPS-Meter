@@ -1,0 +1,73 @@
+# One-off: converts the Evidence Slices already stored in R2 to slice v3 (zstd).
+# See tools/slice-v3. Run it by hand; it is safe to run again, since a slice
+# already in zstd is skipped. Start with a dry run and a small limit.
+name: Convert stored slices to v3
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Convert and verify only, write nothing back
+        type: boolean
+        default: true
+      limit:
+        description: Only the first N slices (0 = all)
+        default: "20"
+      shards:
+        description: Parallel runners
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency: slice-v3-convert
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.shards.outputs.list }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: tools/slice-v3
+      - run: cargo build --release --manifest-path tools/slice-v3/Cargo.toml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: slice-v3
+          path: tools/slice-v3/target/release/slice-v3
+          retention-days: 1
+      - id: shards
+        env:
+          SHARDS: ${{ inputs.shards }}
+        run: echo "list=$(python3 -c 'import json, os; print(json.dumps(list(range(int(os.environ["SHARDS"])))))')" >> "$GITHUB_OUTPUT"
+
+  convert:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJSON(needs.build.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: slice-v3
+      - run: chmod +x slice-v3 && pip install --quiet --upgrade "boto3>=1.36" "botocore>=1.36"
+      - run: python3 tools/slice-v3/convert_r2.py
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ inputs.shards }}
+          LIMIT: ${{ inputs.limit }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          RUN: ${{ github.run_id }}
+          BIN: ./slice-v3

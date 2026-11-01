@@ -1,7 +1,8 @@
 name: Linux packages
 
-# Run by hand (Actions tab, or `gh workflow run arch-package.yml`). Builds the
-# meter's Linux packages and keeps them as downloads:
+# Runs on its own when a release tag (v*) is pushed, and by hand (Actions tab,
+# or `gh workflow run arch-package.yml`). Builds the meter's Linux packages and
+# keeps them as downloads:
 #
 # - the Arch package (packaging/arch/PKGBUILD, makepkg in an Arch container),
 #   for Arch, CachyOS, Manjaro, EndeavourOS;
@@ -13,11 +14,14 @@ name: Linux packages
 # meter never runs as root. Nothing here publishes anything: the files go to
 # the CDN by hand.
 #
-# For a release, run it on the release tag (`gh workflow run arch-package.yml
-# -f ref=v2.0.36`): the packages are then plain 2.0.36, and go to the CDN with
+# For a release, pushing the tag starts it (by hand: `gh workflow run
+# arch-package.yml -f ref=v2.0.36`): the packages are then plain 2.0.36, and go to the CDN with
 # the MSI before the manifest names them (archUrl, debUrl, rpmUrl), which is
 # what Linux meters update from.
 on:
+  # A pushed tag is checked out as itself (inputs.ref is empty then).
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       ref:
@@ -25,32 +29,53 @@ on:
         required: false
         default: main
 
+# Builds and tests only: nothing here writes to the repository (security
+# audit M13). Uploaded artifacts need no extra permission.
+permissions:
+  contents: read
+
 jobs:
+  # Packs the binaries the .deb job built instead of compiling them again
+  # (that took 3.5 of its 4.5 minutes). They are built on Ubuntu 22.04, whose
+  # older glibc runs on Arch, and libpcap is loaded at run time under either
+  # name (platform/linux/pcap.rs); the .rpm ships the same binary to Fedora.
+  # A2T_PREBUILT=1 makes the PKGBUILD's build() use them; plain `makepkg`
+  # from a checkout still builds from source.
   package:
     name: makepkg
-    runs-on: ubuntu-latest
+    needs: deb-rpm
+    runs-on: ubuntu-24.04
     container: archlinux:base-devel
     steps:
-      # git first, so checkout keeps the history pkgver() reads.
-      - name: Build dependencies
+      # git first, so checkout keeps the history pkgver() reads. The rest are
+      # the package's runtime dependencies, so ldd below can resolve them.
+      - name: Dependencies
         run: |
-          pacman -Syu --noconfirm --needed git rust nodejs npm pkgconf \
-            webkit2gtk-4.1 gtk3 libpcap libcap hicolor-icon-theme
-      - uses: actions/checkout@v4
+          pacman -Syu --noconfirm --needed git \
+            webkit2gtk-4.1 gtk3 libpcap libcap hicolor-icon-theme \
+            gst-plugins-base gst-plugins-good
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
-      # makepkg refuses to run as root.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: linux-binaries
+          path: src-tauri/target/release
+      # It must load on Arch: every library it needs is found.
+      - name: What it links against
+        run: |
+          ldd src-tauri/target/release/a2tools-dps-meter | sort
+          ! ldd src-tauri/target/release/a2tools-dps-meter | grep "not found"
+      # makepkg refuses to run as root. --nodeps: the makedepends (rust,
+      # npm) are not needed to pack prebuilt binaries.
       - name: makepkg
         run: |
           useradd -m builder
           chown -R builder "$GITHUB_WORKSPACE"
-          su builder -c "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg --noconfirm"
-      - name: What it links against
-        run: |
-          ldd "$GITHUB_WORKSPACE/src-tauri/target/release/a2tools-dps-meter" | sort
+          su builder -c "cd '$GITHUB_WORKSPACE/packaging/arch' && A2T_PREBUILT=1 makepkg --noconfirm --nodeps"
           ls -la "$GITHUB_WORKSPACE"/packaging/arch/*.pkg.tar.zst
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: arch-package
           path: packaging/arch/*.pkg.tar.zst
@@ -60,18 +85,34 @@ jobs:
     name: .deb and .rpm
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ref }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: src-tauri
+          key: deb-rpm
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 20
+          cache: npm
+      # Cached between runs (it took a minute to download and install every
+      # time); the list is the cache key, so changing it fetches afresh.
       - name: Build dependencies
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1
+        with:
+          packages: libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev rpm cpio mold
+          version: 1
+      # mold links far faster than ld, and the meter's link is a large share
+      # of an incremental build. GCC 11 (Ubuntu 22.04) has no -fuse-ld=mold;
+      # -B points it at mold's `ld` instead, as mold's README says.
+      - name: Link with mold
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
-            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev rpm cpio
+          test -x /usr/libexec/mold/ld
+          echo "RUSTFLAGS=-C link-arg=-B/usr/libexec/mold" >> "$GITHUB_ENV"
       # Files a clean checkout lacks (gitignored mirrors of src/data), as in
       # the PKGBUILD's build().
       - name: Frontend data
@@ -83,7 +124,18 @@ jobs:
       - name: Build
         run: |
           npm ci
+          # The hotkeys helper first: tauri.linux.conf.json packs it next to
+          # the meter (platform/linux/hotkeys.rs), without capabilities.
+          cargo build --release --manifest-path src-tauri/Cargo.toml --bin a2tools-hotkeys
           npx tauri build --bundles deb,rpm
+      # The same two binaries for the Arch package (the makepkg job).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: linux-binaries
+          path: |
+            src-tauri/target/release/a2tools-dps-meter
+            src-tauri/target/release/a2tools-hotkeys
+          if-no-files-found: error
       # Tauri's .rpm can only grant capture permission from a %post script,
       # which rpm-ostree (Bazzite and the other image-based Fedoras) runs
       # without the privilege to do it. Repackage its files with our spec,
@@ -127,7 +179,9 @@ jobs:
           rpm -qp --scripts out/*.rpm
           rpm -qp --filecaps out/*.rpm | grep cap_net_raw
           rpm -qlp out/*.rpm | grep -E '^/usr/(bin|share/applications)/'
-      - uses: actions/upload-artifact@v4
+          dpkg-deb --contents out/*.deb | grep -q usr/bin/a2tools-hotkeys
+          rpm -qlp out/*.rpm | grep -qx /usr/bin/a2tools-hotkeys
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: deb-rpm-packages
           path: out/*
@@ -136,7 +190,7 @@ jobs:
   install-test:
     name: Install on ${{ matrix.image }}
     needs: deb-rpm
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container: ${{ matrix.image }}
     strategy:
       fail-fast: false
@@ -149,7 +203,7 @@ jobs:
           - image: fedora:41
             install: dnf install -y ./a2tools-dps-meter-*.x86_64.rpm
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: deb-rpm-packages
       # Dependencies resolve, the install script grants capture permission,
@@ -161,38 +215,66 @@ jobs:
           set -e
           test -x /usr/bin/a2tools-dps-meter
           getcap /usr/bin/a2tools-dps-meter | tee /dev/stderr | grep -q cap_net_raw
+          # The hotkeys helper: present, and without any capability, which is
+          # what lets the desktop portal accept it (#42).
+          test -x /usr/bin/a2tools-hotkeys && test -z "$(getcap /usr/bin/a2tools-hotkeys)"
           if ldd /usr/bin/a2tools-dps-meter | grep 'not found'; then exit 1; fi
           # Under one of the names platform/linux/pcap.rs loads it by.
           ldconfig -p | grep -qE 'libpcap\.so\.(1|0\.8) ' || { echo "libpcap missing"; exit 1; }
           ls /usr/share/applications/ | grep -i a2tools
 
   # The RPM repository on the CDN (linux/rpm/), which Fedora and the
-  # image-based Fedoras install and update the meter from.
+  # image-based Fedoras install and update the meter from. Its package and
+  # its index (repomd.xml) are signed with the Linux packages key (secret
+  # LINUX_SIGNING_KEY; the public half is packaging/linux/a2tools.asc, served
+  # as linux/a2tools.asc) and a2tools.repo has dnf check both: otherwise a
+  # package swapped on the CDN would install as root (audit M4). The signed
+  # .rpm here is the one to publish, at every address.
   rpm-repo:
     name: RPM repository
     needs: deb-rpm
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container: fedora:41
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref }}
+          sparse-checkout: packaging/linux
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: deb-rpm-packages
-      - name: Metadata
+          path: built
+      - name: Sign and index
+        env:
+          LINUX_SIGNING_KEY: ${{ secrets.LINUX_SIGNING_KEY }}
         run: |
-          dnf install -y createrepo_c
+          set -euo pipefail
+          test -n "$LINUX_SIGNING_KEY" || { echo "LINUX_SIGNING_KEY is not set: the repository can't be signed"; exit 1; }
+          dnf install -y createrepo_c rpm-sign gnupg2
+          export GNUPGHOME="$(mktemp -d)"
+          printf '%s\n' "$LINUX_SIGNING_KEY" | gpg --batch --import
+          # The key that signs is the one the repo file names.
+          fpr=$(gpg --batch --with-colons --show-keys packaging/linux/a2tools.asc | awk -F: '/^fpr/ {print $10; exit}')
+          gpg --batch --list-secret-keys "$fpr" > /dev/null
           mkdir -p repo/rpm
-          cp a2tools-dps-meter-*.x86_64.rpm repo/rpm/
+          cp built/a2tools-dps-meter-*.x86_64.rpm repo/rpm/
+          rpmsign --define "_gpg_name $fpr" --define "__gpg $(command -v gpg)" --addsign repo/rpm/*.rpm
+          rpm --import packaging/linux/a2tools.asc
+          rpm -K repo/rpm/*.rpm | tee /dev/stderr | grep -q 'signatures OK'
           createrepo_c repo/rpm
+          gpg --batch --yes --local-user "$fpr" --armor --detach-sign repo/rpm/repodata/repomd.xml
+          cp packaging/linux/a2tools.asc repo/
           ls -laR repo
       # Installed from the repository, the way a player does, rather than
-      # from the file.
+      # from the file, with both signatures checked.
       - name: Install from it
         run: |
-          printf '[a2tools]\nname=A2Tools DPS Meter (test)\nbaseurl=file://%s/repo/rpm/\ngpgcheck=0\n' "$PWD" \
+          printf '[a2tools]\nname=A2Tools DPS Meter (test)\nbaseurl=file://%s/repo/rpm/\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file://%s/repo/a2tools.asc\n' "$PWD" "$PWD" \
             > /etc/yum.repos.d/a2tools.repo
           dnf install -y a2-tools-dps-meter
           getcap /usr/bin/a2tools-dps-meter | grep cap_net_raw
-      - uses: actions/upload-artifact@v4
+          test -x /usr/bin/a2tools-hotkeys && test -z "$(getcap /usr/bin/a2tools-hotkeys)"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: rpm-repo
           path: repo
@@ -205,14 +287,26 @@ jobs:
   bazzite:
     name: Install on Bazzite
     needs: rpm-repo
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      # The image is large; the runner needs the room.
+      # The image is large; the runner needs the room. The runner's scratch
+      # disk (/mnt) usually has plenty, so the image goes there; deleting
+      # preinstalled toolchains from / (over a minute) is the fallback.
       - name: Disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          df -h /
-      - uses: actions/download-artifact@v4
+          avail=$(df --output=avail -k /mnt 2>/dev/null | tail -1 | tr -d " ")
+          if [ "${avail:-0}" -gt 31457280 ]; then
+            sudo mkdir -p /mnt/containers
+            echo "PODMAN_ROOT=--root=/mnt/containers" >> "$GITHUB_ENV"
+            df -h /mnt
+          else
+            for d in /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL; do
+              sudo rm -rf "$d" &
+            done
+            wait
+            df -h /
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: rpm-repo
           path: repo
@@ -220,9 +314,9 @@ jobs:
         run: |
           # Podman, not Docker: the image has more layers than Docker allows
           # ("max depth exceeded").
-          sudo podman run --rm -v "$PWD/repo:/repo:ro" ghcr.io/ublue-os/bazzite:stable bash -euc '
+          sudo podman $PODMAN_ROOT run --rm -v "$PWD/repo:/repo:ro" ghcr.io/ublue-os/bazzite:stable bash -euc '
             cat /etc/os-release | grep -E "^(NAME|VERSION)="
-            printf "[a2tools]\nname=A2Tools DPS Meter (test)\nbaseurl=file:///repo/rpm/\ngpgcheck=0\n" > /etc/yum.repos.d/a2tools.repo
+            printf "[a2tools]\nname=A2Tools DPS Meter (test)\nbaseurl=file:///repo/rpm/\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file:///repo/a2tools.asc\n" > /etc/yum.repos.d/a2tools.repo
             if rpm-ostree install a2-tools-dps-meter; then
               echo "installed with rpm-ostree"
             else
@@ -230,6 +324,7 @@ jobs:
               dnf install -y a2-tools-dps-meter
             fi
             getcap /usr/bin/a2tools-dps-meter | tee /dev/stderr | grep -q cap_net_raw
+            test -x /usr/bin/a2tools-hotkeys && test -z "$(getcap /usr/bin/a2tools-hotkeys)"
             if ldd /usr/bin/a2tools-dps-meter | grep "not found"; then exit 1; fi
             ldconfig -p | grep -qE "libpcap\.so\.(1|0\.8) "
           '
@@ -242,29 +337,30 @@ jobs:
   steamos-distrobox:
     name: SteamOS route (rootful distrobox)
     needs: package
-    # Not yet working: distrobox will not create a rootful box here without
-    # its interactive password prompt (the skip flag is misread as a box
-    # name). Kept to finish, but it does not hold up a release; the route is
-    # marked unconfirmed in docs/linux.md.
-    continue-on-error: true
+    # Required, like the other install tests: a failure here fails the run.
+    # It used to be allowed to fail, while distrobox could not create a rootful
+    # box without its interactive password prompt (the skip flag was misread
+    # as a box name: a literal "\n" where a line continuation belonged, fixed
+    # in 2.0.56). A real Steam Deck is still unconfirmed (docs/linux.md).
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: arch-package
           path: pkg
       - name: Create the box and install
         run: |
           # Ubuntu's distrobox (1.7) is older than SteamOS's; use a current one.
-          sudo apt-get update
-          sudo apt-get install -y podman
-          curl -s https://raw.githubusercontent.com/89luca89/distrobox/main/install | sh -s -- --prefix ~/.local
+          # The runner image ships podman; install it only if that changes.
+          command -v podman || { sudo apt-get update && sudo apt-get install -y podman; }
+          curl -fsS https://raw.githubusercontent.com/89luca89/distrobox/1.8.2.5/install | sh -s -- --prefix ~/.local
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.local/bin:$PATH"
           distrobox version
           # A rootful box asks for a password for the user inside it on first
           # entry; a player types one, CI cannot.
-          distrobox create --root --yes --name a2tools --image docker.io/library/archlinux:latest \n            --absolutely-disable-root-password-i-am-really-positively-sure
+          distrobox create --root --yes --name a2tools --image docker.io/library/archlinux:latest \
+            --absolutely-disable-root-password-i-am-really-positively-sure
           distrobox enter --root a2tools -- sudo pacman -Syu --noconfirm
           distrobox enter --root a2tools -- sudo pacman -U --noconfirm "$PWD"/pkg/*.pkg.tar.zst
       - name: Capture permission

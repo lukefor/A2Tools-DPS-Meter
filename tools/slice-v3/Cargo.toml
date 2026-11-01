@@ -1,0 +1,19 @@
+[package]
+name = "slice-v3"
+version = "0.1.0"
+edition = "2024"
+description = "Converts stored Evidence Slices (gzip, v1/v2) to slice v3 with zstd, verified record by record"
+license = "GPL-3.0"
+publish = false
+
+[dependencies]
+# The meter's own slice codec, without Tauri.
+a2tools-dps-meter = { path = "../../src-tauri", default-features = false }
+flate2 = "1"
+zstd = "0.14.3"
+# The decoder the log service uses: a converted slice is checked with it.
+ruzstd = "0.9.1"
+sha2 = "0.11"
+
+[profile.release]
+opt-level = 3

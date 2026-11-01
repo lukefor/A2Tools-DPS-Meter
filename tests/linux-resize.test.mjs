@@ -6,7 +6,7 @@ import vm from "node:vm";
 const source = readFileSync(new URL("../public/src/js/tauriBridge.js", import.meta.url), "utf8");
 const startup = source.slice(source.indexOf("  const { invoke }"), source.indexOf("  // Three windows"));
 const overlay = source.slice(source.indexOf("  // ===== Overlay resize handle"), source.indexOf("  // Startup diagnostics"));
-const tool = source.slice(source.indexOf("  // ===== Tool windows on Linux"), source.indexOf("  // Pre-fetch device list"));
+const tool = source.slice(source.indexOf("  // ===== Tool windows: drag by the header"), source.indexOf("  // Pre-fetch device list"));
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 function setup({ userAgent = "Linux", supported = false, view = "main", detect } = {}) {
@@ -17,7 +17,7 @@ function setup({ userAgent = "Linux", supported = false, view = "main", detect }
   const document = {
     readyState: "complete",
     body: { classList: { add: (value) => classes.add(value) } },
-    documentElement: { classList: { add() {}, remove() {} } },
+    documentElement: { classList: { add() {}, remove() {}, contains: (name) => name === "linux" && /Linux/.test(userAgent) } },
     head: { appendChild() {} },
     createElement: () => ({}),
     addEventListener(name, handler) {
@@ -30,6 +30,8 @@ function setup({ userAgent = "Linux", supported = false, view = "main", detect }
     A2_VIEW: view, devicePixelRatio: 1,
     __TAURI__: {
       core: { invoke: (command, args) => {
+        // Every page asks which optional parts the build has; not a window call.
+        if (command === "build_features") return Promise.resolve({ online: true });
         calls.push({ command, args });
         return command === "compositor_resize_supported" && detect
           ? detect : Promise.resolve(command === "compositor_resize_supported" ? supported : null);
@@ -39,7 +41,7 @@ function setup({ userAgent = "Linux", supported = false, view = "main", detect }
     },
   };
   const context = vm.createContext({
-    window, document, navigator: { userAgent }, console,
+    window, document, navigator: { userAgent }, console, Node: { TEXT_NODE: 3 },
     resizeActive: false, nativeResize: null, primaryHeld: true, lastSizeKey: "",
     spaceRightBelow: () => ({ w: 1920, h: 1080 }),
     overlayPadding: () => ({ w: 16, h: 10 }),
@@ -75,13 +77,39 @@ test("Windows skips Linux capability detection and preserves an immediate resize
   assert.equal(app.nativeResizes.length, 0);
 });
 
+test("Windows tool windows drag from the header by the page, not by app-region", () => {
+  // -webkit-app-region made WebView2 move a helper window on every layout
+  // change, and that froze the whole app for seconds at a time.
+  const app = setup({ userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", view: "settings" });
+  const header = (inButton) => ({
+    button: 0, clientX: 200, clientY: 20,
+    target: { closest: (selector) => selector.includes(".settingsHeader") || (inButton && selector.includes("button")) },
+    preventDefault() { this.prevented = true; },
+    stopImmediatePropagation() { this.stopped = true; },
+  });
+  const press = header(false);
+  app.emit("mousedown", press);
+  assert.equal(app.calls.at(-1)?.command, "start_tool_drag");
+  assert.equal(press.prevented, true);
+  const before = app.calls.length;
+  const onButton = header(true);
+  app.emit("mousedown", onButton);
+  assert.equal(app.calls.length, before, "a header button is clicked, not dragged");
+  assert.equal(onButton.prevented, undefined);
+});
+
 test("other Linux desktops keep viewport resizing without GNOME styling", async () => {
   const app = setup({ supported: false });
   await tick();
+  // A Wayland window reads its place as 0,0: the room to grow must not be
+  // taken from it (Hyprland moved a window grown to the whole screen, #102).
+  Object.assign(app.context.window, { innerWidth: 420, innerHeight: 180, screenX: 0, screenY: 0, screen: { availWidth: 3440, availHeight: 1440 } });
   const press = pressHandle();
   app.emit("mousedown", press);
   assert.equal(press.stopped, undefined);
   assert.equal(app.calls.at(-1).command, "resize_window");
+  assert.equal(app.calls.at(-1).args.height, 180, "the height stays the meter's");
+  assert.equal(app.calls.at(-1).args.width, 820, "sideways, by a bounded amount");
   assert.equal(app.nativeResizes.length, 0);
   assert.equal(app.classes.has("linuxOverlay"), false);
 });
@@ -108,7 +136,7 @@ test("GNOME uses compositor resizing for the overlay and tool edges", async () =
   overlayApp.emit("mousedown", press);
   await tick();
   assert.equal(press.stopped, true);
-  assert.deepEqual(overlayApp.nativeResizes[0], ["SouthEast", 316, 40]);
+  assert.deepEqual(overlayApp.nativeResizes[0], ["East", 316, 40]);
   assert.equal(overlayApp.classes.has("linuxOverlay"), true);
   assert.equal(overlayApp.calls.some((call) => call.command === "resize_window"), false);
 

@@ -4,10 +4,43 @@
     "display": {
       "dps": "DPS",
       "total": "DGT",
+      "damageReceived": "SUBI",
       "ariaDps": "Affiche les DPS",
       "ariaDamage": "Affiche les dégâts totaux",
-      "both": "LES 2",
-      "ariaBoth": "Affiche les DPS et les dégâts totaux"
+      "ariaDamageReceived": "Affiche les dégâts subis",
+      "hps": "HPS",
+      "totalHeal": "HEAL",
+      "stagger": "ÉTOUR",
+      "ariaHps": "Affiche les soins par seconde",
+      "ariaHeal": "Affiche les soins totaux",
+      "ariaStagger": "Affiche l'étourdissement infligé à la jauge du boss",
+      "names": {
+        "dps": "Dégâts par seconde",
+        "totalDamage": "Dégâts totaux",
+        "damageReceived": "Dégâts subis",
+        "hps": "Soins par seconde",
+        "totalHeal": "Soins totaux",
+        "stagger": "Étourdissement",
+        "bossStagger": "Étourdissement du boss %",
+        "statColours": "Couleurs des stats",
+        "deaths": "Nombre de morts"
+      },
+      "sortBy": "Trier par ceci",
+      "menuTip": "Choisissez ce qu'affichent les lignes. Molette ou clic droit : métrique suivante",
+      "bossStaggerTip": "L'usure de la jauge d'étourdissement du boss, sur sa barre de PV",
+      "sortCol": "Tri",
+      "showCol": "Afficher",
+      "statColoursTip": "Chaque stat dans sa couleur, sur les lignes, le menu et le bouton"
+    },
+    "updates": {
+      "meter": "A2Tools DPS Meter {version} est disponible",
+      "plugins": "Mises à jour des plugins : {list}"
+    },
+    "targetMode": {
+      "lastHitByMe": "Le dernier ennemi touché",
+      "bossTargets": "Boss uniquement",
+      "trainTargets": "Mannequins d'entraînement",
+      "allTargets": "Tous les ennemis, cumulés"
     }
   },
   "details": {
@@ -63,8 +96,18 @@
       "backTooltip": "Attaque dans le dos %",
       "frontal": "Face",
       "frontalTooltip": "Frontal %",
-      "powershard": "EP",
-      "powershardTooltip": "Éclat de puissance %",
+      "shieldBlock": "Blq",
+      "shieldBlockTooltip": "Blocage au bouclier %",
+      "perfectBlock": "BlqP",
+      "perfectBlockTooltip": "Blocage parfait %",
+      "ironWall": "Endu",
+      "ironWallTooltip": "Endurance %",
+      "regeneration": "Rgn",
+      "regenerationTooltip": "Régénération %",
+      "miss": "Raté",
+      "missTooltip": "Coups ratés",
+      "resist": "Rés",
+      "resistTooltip": "Résistés",
       "regen": "Rég",
       "regenTooltip": "Régénération par vol de vie",
       "multiHit": "MC%",
@@ -76,7 +119,18 @@
       "avgDmg": "Moy",
       "avgDmgTooltip": "Dégâts moyens",
       "maxDmg": "Max",
-      "maxDmgTooltip": "Dégâts max."
+      "maxDmgTooltip": "Dégâts max.",
+      "heal": "Soin",
+      "healTooltip": "Soins",
+      "healPct": "S%",
+      "healPctTooltip": "Soins %"
+    },
+    "peak": {
+      "label": "Liste du groupe",
+      "show": "Afficher le DPS max (meilleures 5 s) à côté de la moyenne"
+    },
+    "party": {
+      "activeDps": "DPS en temps actif : {dps} ({active} sur les {total} du combat)"
     },
     "stats": {
       "totalDamage": "Dégâts totaux",
@@ -91,7 +145,17 @@
       "selfHealing": "Auto-soin",
       "multiHitDamage": "Dégâts des coups multiples",
       "multiHitHits": "Coups multiples",
-      "maxHp": "PV max."
+      "maxHp": "PV max.",
+      "damageReceived": "Dégâts subis",
+      "deaths": "Morts",
+      "avgDps": "DPS moyen",
+      "peakDps": "DPS max",
+      "peakDpsTip": "Le DPS le plus élevé sur 5 secondes du combat",
+      "blockedTaken": "Bloqué (Parfait)",
+      "blockedTakenTip": "Des coups subis : bloqués au bouclier, et entre parenthèses bloqués parfaitement",
+      "parriedTaken": "Paré (Parfait)",
+      "parriedTakenTip": "Des coups subis : parés, et entre parenthèses parés parfaitement",
+      "parryRateTip": "De vos coups : la part que la cible a parée"
     },
     "titleFor": "pour",
     "titleVs": "contre",
@@ -100,9 +164,100 @@
     "history": {
       "allPlayers": "Tous les joueurs"
     },
-    "dpsChart": "Graphique DPS",
+    "dpsChart": "Dégâts par seconde",
     "historyBtn": "Historique",
-    "timeline": "Chronologie"
+    "timeline": "Chronologie",
+    "buffs": {
+      "title": "Buffs",
+      "castByLabel": "Lancé par",
+      "casterAll": "Tous",
+      "casterParty": "Groupe",
+      "casterSelf": "Soi",
+      "sortLabel": "Tri",
+      "sortUptime": "Uptime",
+      "sortFirst": "Ordre d'application",
+      "showPassives": "Passifs",
+      "passives": "Passifs",
+      "uptime": "Actif",
+      "onTarget": "Debuffs sur la cible",
+      "selectPlayer": "Sélectionnez un joueur ci-dessus pour voir ses buffs.",
+      "noneShown": "Aucun avec ces filtres.",
+      "none": "Aucun buff ni debuff détecté pendant ce combat.",
+      "older": "Pas de données de buffs pour ce combat (enregistré par une ancienne version).",
+      "loading": "Chargement...",
+      "unknownCaster": "Inconnu",
+      "summonTag": "Invocation",
+      "castBy": "Lancé par {name}",
+      "stacks": "Cumuls : {n}",
+      "ended": "Fin : {reason}",
+      "beforePull": "Actif avant le début du combat",
+      "end": {
+        "stacks": "Cumuls modifiés",
+        "expired": "Expiré",
+        "takenOff": "Retiré par une compétence",
+        "removed": "Retiré (raison inconnue)",
+        "recast": "Réappliqué par un autre lanceur",
+        "gone": "Cible morte ou partie",
+        "mapLoad": "Changement de carte",
+        "notListed": "Fin non observée",
+        "pushedOut": "Remplacé par un cumul plus récent",
+        "unseen": "Expiré (fin non observée)",
+        "stillOn": "Encore actif à la fin du combat",
+        "replaced": "Remplacé par un nouveau niveau"
+      }
+    },
+    "stagger": {
+      "title": "Étourdissement",
+      "unknownActor": "Inconnu",
+      "unknownSkill": "Compétence inconnue",
+      "older": "Aucune donnée d'étourdissement pour ce combat (enregistré par une version antérieure).",
+      "loading": "Chargement...",
+      "none": "Aucune jauge d'étourdissement n'a été entamée dans ce combat.",
+      "incomplete": "Son début n'a pas été vu : l'étourdissement antérieur manque.",
+      "ambiguous": "Peut appartenir à un autre joueur : quelqu'un d'autre a frappé au même moment.",
+      "ambiguousCount": "{n} coup(s) peuvent appartenir à un autre joueur.",
+      "value": "{n} d'étourdissement",
+      "ended": {
+        "break": "Brisée après {secs} s",
+        "reset": "Manquée : il restait {missing} sur {max}",
+        "death": "Vaincu avant la rupture : il restait {missing} sur {max}",
+        "despawn": "Parti avant la rupture : il restait {missing} sur {max}",
+        "fightEnd": "Encore ouverte à la fin du combat : il restait {missing} sur {max}"
+      }
+    },
+    "fightTimeline": "Chronologie du combat",
+    "replay": {
+      "label": "Relecture",
+      "title": "Relecture",
+      "play": "Lancer la relecture",
+      "pause": "Pause",
+      "speed": "Vitesse de lecture",
+      "position": "Position de la relecture",
+      "positionText": "{at} sur {total}",
+      "exit": "Terminer la relecture (afficher tout le combat)",
+      "wholeFightNote": "Dégâts subis, Min / Max et buffs : tout le combat.",
+      "moreSkills": "+{n} de plus, visibles en pause",
+      "noHealTiming": "Les soins de ce combat n'ont pas d'horodatage (enregistré par une ancienne version) : ils montrent tout le combat.",
+      "unavailable": "Ce combat a été enregistré sans les instants des coups, il ne peut pas être relu"
+    },
+    "casts": "Lancers",
+    "resize": "Faire glisser pour redimensionner",
+    "healTimingNote": "Pas de moments de soin pour ce combat (enregistré par une version plus ancienne).",
+    "chart": {
+      "bossHp": "PV du boss",
+      "ping": "Ping",
+      "death": "Mort",
+      "died": "mort à",
+      "downFor": "à terre"
+    },
+    "hpsChart": "Soins par seconde",
+    "sectionChart": "Graphique",
+    "showSections": "Sections affichées",
+    "hoverTooltip": {
+      "loading": "Chargement...",
+      "empty": "Aucune donnée de compétence pour ce combat",
+      "error": "Impossible de charger les compétences"
+    }
   },
   "history": {
     "title": "Historique des combats",
@@ -121,30 +276,78 @@
     "viewDungeon": "Grouper par donjon",
     "viewGrouped": "Grouper par boss",
     "fightCount": "{n} combats",
+    "best": "Meilleur {time}",
+    "top": "Max {damage}",
+    "showAll": "Afficher les {n}",
+    "showFewer": "Afficher moins",
+    "expandAll": "Tout déplier",
+    "collapseAll": "Tout replier",
+    "training": "Entraînement",
     "fightCountOne": "1 combat",
     "previewUpload": "Aperçu de l'envoi",
     "previewUploadTip": "Écrit ce que le partage de ce combat enverrait. Rien n'est envoyé.",
     "previewWorking": "Création de l'aperçu…",
     "previewDone": "{slice} Ko écrits ({sent} Ko compressés — ce qu'un envoi transmettrait). {kept} paquets conservés sur {seen}, {blinded} noms masqués. Rien n'a été envoyé. Enregistré dans {dir}",
-    "openWorld": "Monde ouvert"
+    "openWorld": "Monde ouvert",
+    "tabFights": "Combats",
+    "tabBests": "Records personnels",
+    "search": "Boss ou donjon…",
+    "allCharacters": "Tous les personnages",
+    "allDifficulties": "Toutes les difficultés",
+    "periodAll": "Toute la période",
+    "periodToday": "Dernières 24 heures",
+    "period7": "7 derniers jours",
+    "period30": "30 derniers jours",
+    "sort": "Trier",
+    "sortNewest": "Plus récents",
+    "sortFastest": "Victoire la plus rapide",
+    "sortPartyDps": "DPS du groupe",
+    "sortMyDps": "Votre DPS",
+    "sortRecent": "Plus récents",
+    "sortTier": "Palier du donjon",
+    "killsOnly": "Victoires seulement",
+    "wipe": "Échec",
+    "pb": "Record",
+    "pbTip": "Un de vos records personnels",
+    "party": "Groupe",
+    "you": "Vous",
+    "totalDamage": "Dégâts totaux",
+    "finalBoss": "Boss final",
+    "fightGone": "Ce combat n'est plus enregistré ; son record est conservé.",
+    "unconfirmedTip": "La victoire n'a pas été enregistrée (combat d'avant la 2.0.87) : estimée d'après les dégâts infligés.",
+    "openBest": "Ouvrir ce combat",
+    "killOne": "1 victoire",
+    "wipeOne": "1 échec",
+    "kills": "{n} victoires",
+    "wipes": "{n} échecs",
+    "otherBosses": "Autres boss ({n})",
+    "otherLevels": "Autres niveaux ({n})",
+    "noBests": "Aucune victoire en donjon pour l'instant.",
+    "encounter": "Rencontre",
+    "fastestKill": "Victoire la plus rapide",
+    "yourBest": "Votre meilleur DPS",
+    "partyBest": "Meilleur du groupe",
+    "uploadTip": "Envoyer ce combat sur a2tools.app et obtenir un lien à partager",
+    "uploadOpen": "Ouvrir le journal de ce combat sur a2tools.app",
+    "uploadWorking": "Envoi…",
+    "uploadDonePublic": "Envoyé. Lien copié : {url}",
+    "uploadDonePrivate": "Envoyé en privé. Lien copié : {url}"
   },
   "settings": {
     "title": "Paramètres",
-    "lockedPort": "Périphérique/port détecté",
-    "resetDetection": "Réinitialiser",
-    "characterName": "Nom#ID",
+    "lockedPort": "Connexion détectée",
+    "resetDetection": "Détecter à nouveau",
+    "characterName": "Ton personnage",
     "characterNamePlaceholder": "Saisissez le nom de votre personnage",
-    "pinMeToTop": "Toujours m'afficher en haut",
+    "pinMeToTop": "Garder ma ligne en haut",
     "slimMode": "Mode compact",
     "meterLayout": {
       "label": "Disposition du meter",
-      "beta": "Beta UI",
-      "betaSlim": "Bêta compact",
-      "classic": "Interface classique",
-      "classicSlim": "Classique compact"
+      "standard": "Standard",
+      "slim": "Compact"
     },
     "detailsMonitor": {
-      "label": "Afficher les détails sur l'écran",
+      "label": "Détails sur le second écran",
       "off": "Désactivé",
       "primary": "principal",
       "missing": "Cet écran n'est pas connecté.",
@@ -161,39 +364,85 @@
     "connection": "Connexion",
     "diagnostics": "Diagnostics",
     "device": {
-      "label": "Périphérique de capture",
+      "label": "Carte réseau",
       "autoDetect": "Détection auto"
     },
     "advanced": "Avancé",
     "bossLogs": "Activer les journaux par boss",
-    "saveRawPackets": "Activer la journalisation des paquets",
+    "saveRawPackets": "Journal des paquets",
     "resetAllSettings": "Réinitialiser tous les paramètres",
     "bold": {
-      "label": "Gras",
+      "label": "Texte en gras",
       "names": "Noms",
       "dps": "DPS"
     },
     "showPing": "Afficher le ping",
-    "showTotalDps": "Afficher DPS/DGT total",
-    "roundDps": "Arrondir les DPS",
-    "autoHideMeter": "Masquer le meter automatiquement",
-    "showSuspendBtn": "Afficher le bouton pause",
-    "showLockBtn": "Afficher le bouton de verrouillage (clics traversants)",
+    "showOdyle": "Afficher l'énergie d'Odyle",
+    "odyleEnergy": "Énergie d'Odyle",
+    "showTtk": "Afficher le temps de kill estimé",
+    "showTotalDps": "Afficher le total du groupe",
+    "roundDps": "Abréger le DPS en milliers (13k)",
+    "showDpsSuffix": "Ajouter /s au DPS",
+    "autoHideMeter": "Masquer quand AION2 n'est pas au premier plan",
+    "hideWhenGameClosed": "Masquer quand AION2 est fermé",
+    "hideWhenSolo": "Afficher seulement en groupe",
+    "hideOutOfCombat": {
+      "label": "Masquer hors combat",
+      "off": "Désactivé",
+      "seconds": "Après {seconds} s"
+    },
+    "showSuspendBtn": "Afficher le bouton de pause de capture",
+    "showLockBtn": "Afficher le bouton de verrouillage (clic au travers)",
     "playerLimit": {
       "label": "Joueurs affichés max."
     },
-    "debugLogging": "Activer la journalisation de débogage",
+    "partyPresence": "Afficher les utilisateurs d'A2Tools de mon groupe",
+    "debugLogging": "Journal de débogage",
     "quit": "Quitter",
     "discord": {
       "title": "Discord",
       "activity": "Afficher dans Discord ce à quoi je joue",
-      "activityHint": "Tant qu'AION2 est ouvert, votre statut Discord affiche le nom de votre personnage, sa classe, son niveau, votre serveur et le boss que vous combattez. Cela passe par l'application Discord de cet ordinateur ; aucun compte n'est nécessaire."
+      "activityHint": "Tant qu'AION2 est ouvert, votre statut Discord affiche le nom de votre personnage, sa classe, son niveau, votre serveur et le boss que vous combattez. Cela passe par l'application Discord de cet ordinateur ; aucun compte n'est nécessaire. Avec un Nombre dans Discord choisi, il affiche aussi votre puissance de combat ou votre score d'équipement.",
+      "stat": "Nombre dans Discord",
+      "statHint": "Le nombre que votre statut Discord affiche après votre niveau."
+    },
+    "streamOverlay": {
+      "title": "Streaming",
+      "enable": "Overlay de stream (OBS sur un autre PC)",
+      "enableHint": "Partage le meter sur votre réseau local pour qu'OBS sur un second PC l'affiche comme source navigateur.",
+      "port": "Port",
+      "url": "URL de la source navigateur",
+      "copy": "Copier",
+      "copied": "Copié",
+      "newKey": "Nouvelle clé",
+      "help": "Dans OBS sur l'autre PC, ajoutez une source navigateur avec cette URL. La première fois, le pare-feu Windows pose la question pour le meter : autorisez-le sur les réseaux privés. Toute personne de votre réseau ayant le lien peut voir le meter ; « Nouvelle clé » désactive les anciens liens.",
+      "noAddress": "Aucune adresse réseau trouvée. Ce PC est-il connecté à votre réseau ?",
+      "portInvalid": "Indiquez un port entre 1024 et 65535.",
+      "error": "Impossible de démarrer l'overlay : {error}",
+      "waiting": "En attente de combat…",
+      "reconnecting": "Reconnexion au meter…",
+      "player": "Joueur",
+      "displayName": "Ton nom en stream",
+      "displayNamePlaceholder": "Nom de ton personnage"
     },
     "version": "Version",
+    "update": {
+      "check": "Rechercher des mises à jour",
+      "checking": "Vérification…",
+      "current": "À jour",
+      "installing": "Mise à jour…",
+      "available": "La {version} est sortie",
+      "failed": "Vérification impossible. Réessaie plus tard."
+    },
     "theme": {
-      "label": "Thème",
+      "label": "Thème de couleurs",
       "options": {
         "aion2": "AION2",
+        "aion2Classes": "AION2 (couleurs de classe)",
+        "aion2ClassesVivid": "AION2 (couleurs de classe, vives)",
+        "aion2Spectrum": "Spectre",
+        "aion2Aurora": "Aurore",
+        "aion2Sunset": "Coucher de soleil",
         "asmodian": "Asmodian",
         "cogni": "Cogni",
         "elyos": "Elyos",
@@ -205,27 +454,85 @@
         "varian": "Varian"
       }
     },
+    "settingsTheme": {
+      "label": "Couleurs des paramètres",
+      "tip": "Les couleurs de cette fenêtre de paramètres. Le compteur garde son propre thème.",
+      "options": {
+        "meter": "Thème du compteur",
+        "midnight": "Minuit",
+        "graphite": "Graphite",
+        "violet": "Violet",
+        "forest": "Forêt",
+        "crimson": "Cramoisi",
+        "ocean": "Océan",
+        "sapphire": "Saphir",
+        "indigo": "Indigo",
+        "rose": "Rose",
+        "sunset": "Coucher de soleil",
+        "amber": "Ambre",
+        "copper": "Cuivre",
+        "lime": "Citron vert",
+        "ice": "Glace",
+        "slate": "Ardoise",
+        "onyx": "Onyx"
+      }
+    },
+    "font": {
+      "label": "Police",
+      "tip": "La police du compteur, des paramètres, de l'historique des combats et des détails.",
+      "options": {
+        "meter": "Police du compteur",
+        "system": "Police du système",
+        "inter": "Inter",
+        "exo2": "Exo 2",
+        "oxanium": "Oxanium",
+        "jetbrains": "JetBrains Mono (chiffres de même largeur)",
+        "atkinson": "Atkinson Hyperlegible (lettres et chiffres nets)",
+        "lexend": "Lexend (lecture facilitée)",
+        "andika": "Andika (pour la dyslexie)"
+      }
+    },
+    "textureOffset": "Décaler les textures",
+    "barTexture": {
+      "label": "Texture des barres",
+      "supportersOnly": "Pour les soutiens : connectez-vous ci-dessus, dans Compte A2 Tools, pour l'utiliser.",
+      "options": {
+        "none": "Aucune",
+        "flames": "Flammes",
+        "crystal": "Cristal de givre",
+        "glacier": "Glacier",
+        "feathers": "Plumes",
+        "wing": "Aile",
+        "storm": "Tempête",
+        "nebula": "Nébuleuse",
+        "galaxy": "Galaxie",
+        "aura": "Aura"
+      }
+    },
+    "appearanceGroups": {
+      "general": "Général",
+      "colours": "Couleurs",
+      "layout": "Disposition",
+      "opacity": "Opacité"
+    },
     "language": {
       "label": "Langue"
     },
     "windowOpacity": {
-      "label": "Opacité de la fenêtre principale"
+      "label": "Opacité du fond"
+    },
+    "titleOpacity": {
+      "label": "Opacité de la barre de titre"
     },
     "meterOpacity": {
       "label": "Opacité des barres"
     },
-    "bossNameSize": {
-      "label": "Taille du nom de la cible"
+    "barPreview": "Aperçu",
+    "meterSaturation": {
+      "label": "Intensité des couleurs"
     },
-    "targetWindow": {
-      "label": "Plage de temps de la cible",
-      "options": {
-        "5s": "5 secondes",
-        "10s": "10 secondes",
-        "15s": "15 secondes",
-        "20s": "20 secondes",
-        "30s": "30 secondes"
-      }
+    "bossNameSize": {
+      "label": "Taille du titre"
     },
     "targetSelection": {
       "label": "Sélection de cible (expérimental)",
@@ -236,8 +543,17 @@
         "allTargets": "Toutes les cibles combinées"
       }
     },
+    "updateRate": {
+      "label": "Fréquence de mise à jour",
+      "options": {
+        "100": "0,1 s",
+        "200": "0,2 s (par défaut)",
+        "250": "0,25 s",
+        "500": "0,5 s"
+      }
+    },
     "allTargetsWindow": {
-      "label": "Plage de temps toutes cibles",
+      "label": "Fenêtre de toutes les cibles",
       "options": {
         "30s": "30 secondes",
         "1m": "1 minute",
@@ -252,14 +568,28 @@
       "reload": "Recharger les données",
       "toggle": "Afficher/masquer la fenêtre",
       "pressKeys": "Appuyez sur des touches...",
-      "needModifiers": "2 modificateurs minimum",
-      "lock": "Verrouiller/déverrouiller l'overlay"
+      "tooManyKeys": "3 touches au maximum",
+      "plugins": "Ramener les fenêtres des plugins",
+      "notSet": "Non défini",
+      "restoreDefaults": "Rétablir par défaut",
+      "hint": "Cliquez sur un raccourci, puis appuyez sur 1 à 3 touches. Échap annule.",
+      "lock": "Verrouiller/déverrouiller l'overlay",
+      "openDesktop": "Raccourcis du bureau"
     },
     "defaultMeterMode": {
-      "label": "Mode par défaut"
+      "label": "Mode de cible au démarrage"
+    },
+    "partyStat": {
+      "label": "À côté des noms",
+      "options": {
+        "combatPower": "Puissance de combat",
+        "gearScore": "Score d'équipement",
+        "both": "Les deux",
+        "off": "Désactivé"
+      }
     },
     "trainingMode": {
-      "label": "Cible du mode entraînement",
+      "label": "Détails en mode entraînement",
       "options": {
         "all": "Toutes",
         "highestDamage": "Dégâts les plus élevés"
@@ -278,20 +608,170 @@
       "codeHint": "La page devrait déjà être ouverte. Le code expire dans 10 minutes.",
       "working": "En attente de validation…",
       "failed": "Échec de la connexion : {error}",
-      "supporter": "Soutien"
+      "supporter": "Soutien",
+      "guestUpload": "Envoyer les combats de boss sans compte",
+      "guestUploadHint": "À la fin d'un combat de boss, il est envoyé sur a2tools.app, public, sans compte. Les autres joueurs restent masqués. Connecte-toi plus tard et les combats envoyés depuis ce PC deviennent les tiens.",
+      "guestClaimHint": "Les combats envoyés depuis ce PC sont gardés pour toi. Connecte-toi ici pour qu'ils deviennent les tiens, ou obtiens un code pour les récupérer depuis un autre appareil.",
+      "guestClaimButton": "Obtenir un code",
+      "guestClaimCode": "Saisis {code} sur {url} en étant connecté. Le code expire dans 15 minutes.",
+      "claimed": "{count} combats envoyés depuis ce PC sont maintenant à toi.",
+      "autoUpload": "Envoyer automatiquement les combats de boss",
+      "autoUploadHint": "À la fin d'un combat de boss, il est envoyé sur votre compte avec la visibilité choisie sur a2tools.app. Les autres joueurs restent masqués. Les mannequins d'entraînement ne sont jamais envoyés."
     },
     "sendLogs": {
-      "hint": "Envoie tes 3 derniers journaux de paquets au développeur, pour un rapport de bug.",
+      "hint": "Envoie ton journal de débogage et tes derniers journaux de paquets (3 fichiers en tout) au développeur, pour un rapport de bug.",
       "button": "Envoyer les journaux au dev",
-      "confirm": "Envoyer tes 3 derniers journaux de paquets au développeur d'A2 Tools ?\n\nLes journaux de paquets sont le trafic brut du jeu enregistré pendant que la journalisation était activée, noms de personnages compris. Seul le développeur peut les ouvrir, et ils sont supprimés au bout de 30 jours.",
+      "confirm": "Envoyer ton journal de débogage et tes derniers journaux de paquets au développeur d'A2 Tools ?\n\nLe journal de débogage note ce qu'a fait le compteur. Les journaux de paquets sont le trafic brut du jeu enregistré pendant que la journalisation des paquets était activée. Les deux peuvent contenir des noms de personnages. Seul le développeur peut les ouvrir, et ils sont supprimés au bout de 30 jours.",
       "sending": "Envoi...",
       "sent": "Envoyé. Ton code de rapport est {code} : donne-le au développeur sur Discord.",
-      "failed": "Envoi impossible : {error}"
+      "failed": "Envoi impossible : {error}",
+      "files": "Ces fichiers seront envoyés :",
+      "contents": "Les journaux de paquets peuvent contenir le chat et les noms d'autres joueurs."
+    },
+    "barGap": {
+      "label": "Espacement des barres"
+    },
+    "debugLoggingLocked": "Activé tant que la journalisation des paquets l'est : les journaux de paquets ont besoin du journal de débogage.",
+    "tips": {
+      "showOdyle": "Sous le compteur, votre énergie d'Odyle comme le jeu l'affiche : base (+chargée). Mise à jour à la connexion, après un changement de serveur et quand l'énergie change. D'ici là, par exemple après un redémarrage du compteur, la dernière valeur vue s'affiche en grisé.",
+      "characterName": "Ton nom et ton ID en jeu, pour que le compteur sache quelle ligne est la tienne. Il est en général trouvé tout seul.",
+      "device": "La connexion réseau dont le compteur lit le trafic du jeu. La détection automatique la trouve ; avec un VPN, choisis-la à la main.",
+      "lockedPort": "La carte et le port sur lesquels le jeu a été trouvé.",
+      "defaultMeterMode": "Le mode de cible à l'ouverture : Boss, Cible, Entraînement ou Tous.",
+      "playerLimit": "Combien de lignes de joueurs le compteur affiche ; les autres sont masquées.",
+      "pinMeToTop": "Ta ligne reste en premier, quels que soient tes dégâts.",
+      "autoHideMeter": "Le compteur disparaît quand une autre fenêtre passe devant le jeu, et revient avec lui.",
+      "detailsMonitor": "Ouvre la fenêtre Détails sur l'écran choisi et l'y garde.",
+      "showTtk": "À côté du chronomètre, une estimation de la durée totale du combat contre le boss.",
+      "showTotalDps": "Une barre sous les lignes avec le DPS et les dégâts de tout le groupe.",
+      "roundDps": "13 412 s'affiche 13k.",
+      "showSuspendBtn": "Un bouton sur le compteur qui arrête la lecture du trafic du jeu jusqu'à ce que tu appuies à nouveau.",
+      "showLockBtn": "Un bouton qui fait ignorer la souris au compteur, pour que les clics passent au jeu.",
+      "windowOpacity": "La transparence du fond du compteur. Les barres et le texte ne changent pas.",
+      "titleOpacity": "La transparence de la barre de titre du meter, à part du fond en dessous. Tant que vous ne le bougez pas, il suit le fond.",
+      "meterOpacity": "L'opacité des barres de dégâts colorées.",
+      "meterSaturation": "L'intensité des couleurs des barres : plus bas pour plus doux, plus haut pour plus vif.",
+      "bossNameSize": "Taille du nom du boss ou de la cible au-dessus des barres.",
+      "partyStat": "Le nombre à côté du nom de chaque joueur, dans le compteur et dans les détails. Seuls les membres de votre groupe en ont un.",
+      "barTexture": "Un motif sur les barres du compteur. Un merci pour votre soutien à A2 Tools.",
+      "textureOffset": "Chaque barre commence sa texture à un endroit différent, pour qu'elles ne se ressemblent pas toutes.",
+      "trainingMode": "En mode entraînement, quels mannequins la fenêtre Détails affiche : tous ensemble, ou seulement celui que tu frappes le plus.",
+      "allTargetsWindow": "En mode Toutes les cibles, le compteur additionne chaque cible touchée dans ce délai avant le dernier coup.",
+      "updateRate": "À quelle fréquence les chiffres du compteur se rafraîchissent. Plus rapide affiche les coups plus tôt mais utilise plus de CPU.",
+      "partyPresence": "Les membres du groupe qui utilisent aussi A2Tools voient une petite étiquette A2 à côté de votre nom, et vous voyez la leur. Tout membre du groupe utilisant A2Tools peut la voir et saura donc que vous utilisez un meter tiers. Seuls des hachages des noms de personnages et des serveurs sont envoyés.",
+      "debugLogging": "Écrit un journal de diagnostic que le développeur peut utiliser pour trouver les problèmes.",
+      "saveRawPackets": "Enregistre le trafic brut du jeu pour les rapports de bug. Le journal de débogage s'active avec.",
+      "globalHotkeys": "Les touches ci-dessous fonctionnent partout, même quand le jeu est au premier plan. Désactivé, elles sont libérées pour d'autres programmes. Sous Linux, le bureau les enregistre et peut vous demander de les approuver.",
+      "pluginDevMode": "Charge des plugins depuis des dossiers de cet ordinateur, pour les créer et les tester. Ils ne sont pas vérifiés : ne chargez que des plugins de confiance.",
+      "showMeter": "Désactivé : seuls vos plugins s'affichent. Le meter continue d'enregistrer les combats et de les envoyer en arrière-plan. Réaffichez-le ici, avec le raccourci afficher/masquer, ou avec le bouton meter d'une fenêtre de plugin.",
+      "clearOnZone": "Quand le dernier combat quitte le compteur après un changement de zone. Chaque combat reste dans l'Historique dans tous les cas.",
+      "hideWhenGameClosed": "Le compteur se masque quand le jeu n'est pas lancé et réapparaît à son démarrage.",
+      "hideWhenSolo": "Le compteur se masque tant que vous n'êtes pas en groupe et réapparaît quand vous en rejoignez un. Le raccourci Afficher/Masquer le fait toujours apparaître.",
+      "hideOutOfCombat": "Le compteur se masque après ce délai hors combat et réapparaît au prochain coup. Il reste affiché tant que les Paramètres, l'Historique ou les Détails sont ouverts, ou que la souris est dessus.",
+      "runAsAdmin": "Nécessaire pour afficher les FPS du jeu. Windows le demande à chaque démarrage du compteur.",
+      "shareData": "Partage les minuteurs des boss de terrain et les Demandes de ravitaillement de ton serveur avec a2tools.app, pour garder A2Tools à jour pour tout le monde : les boss sur ta carte, ceux que tu vois tomber et leurs PV, et les tableaux de demandes après chaque réinitialisation. Rien sur ton personnage n'est envoyé.",
+      "pluginAutoUpdate": "Au démarrage du compteur, les mises à jour des plugins s'installent d'elles-mêmes, en arrière-plan. Une mise à jour qui demande quelque chose de nouveau attend toujours votre accord.",
+      "meterAnchor": "Le bord du compteur qui ne bouge pas quand des lignes apparaissent ou disparaissent."
+    },
+    "globalHotkeys": "Utiliser les raccourcis",
+    "hotkeyConsent": {
+      "title": "Activer les raccourcis ?",
+      "desktop": "Sous Linux, votre bureau configure les raccourcis du compteur et peut vous demander de les approuver.",
+      "anytime": "Vous pouvez désactiver les raccourcis à tout moment.",
+      "confirm": "Activer",
+      "cancel": "Pas maintenant"
+    },
+    "keybindTaken": "Un autre programme utilise déjà ces touches. Choisissez-en d'autres.",
+    "keybindShared": "Une autre action utilise ces touches. Choisissez-en d'autres.",
+    "keybindUnset": "Ton bureau n'a pas encore attribué de touche à ceci. Définis-la dans Raccourcis du bureau.",
+    "keybindAssigned": "Ton bureau utilise {key}. Change-le dans Raccourcis du bureau.",
+    "plugins": {
+      "title": "Plugins",
+      "devMode": "Mode développeur des plugins",
+      "hint": "Les plugins chargés ici ne sont pas vérifiés. Ne chargez que des plugins de confiance.",
+      "add": "Charger un dossier de plugin…",
+      "open": "Ouvrir",
+      "remove": "Retirer",
+      "checkUpdates": "Rechercher des mises à jour",
+      "checking": "Vérification…",
+      "upToDate": "Tous les plugins sont à jour.",
+      "updated": "Mis à jour : {list}",
+      "updatedFrom": "Mis à jour depuis {version}",
+      "added": "Nouvellement chargé",
+      "intro": "Les plugins vérifiés ajoutent des fonctions à côté du compteur. Chacun n'obtient que ce qu'il demande à l'installation.",
+      "installed": "Installés",
+      "none": "Aucun plugin installé pour l'instant.",
+      "available": "Disponibles",
+      "catalogLoading": "Chargement de la liste des plugins…",
+      "catalogEmpty": "Tous les plugins vérifiés sont installés.",
+      "catalogError": "Impossible de charger la liste des plugins : {error}",
+      "offline": "La version hors ligne ne télécharge pas de plugins.",
+      "install": "Installer",
+      "update": "Mettre à jour",
+      "updateTo": "Mettre à jour vers {version}",
+      "downloading": "Téléchargement…",
+      "installing": "Installation…",
+      "installDone": "{name} {version} est installé.",
+      "updatesAvailable": "Mises à jour disponibles : {list}",
+      "unreviewed": "Dev",
+      "by": "par {author}",
+      "consentTitle": "Installer {name} ?",
+      "consentUpdateTitle": "Mettre à jour {name} ?",
+      "consentIntro": "Il pourra :",
+      "consentNew": "La nouvelle version demande aussi :",
+      "consentNetwork": "Comme toute page web, un plugin peut éventuellement accéder à Internet.",
+      "consentCancel": "Annuler",
+      "permStorage": "Enregistrer ses propres données sur cet ordinateur",
+      "permNotify": "Afficher de courts messages dans sa fenêtre",
+      "permWindow": "Afficher et masquer sa propre fenêtre, sans retirer le focus au jeu",
+      "permWidgets": "Afficher ses propres petites fenêtres, que vous pouvez déplacer n'importe où et verrouiller",
+      "permBossTimers": "Lire les minuteurs des boss de terrain partagés par les joueurs via a2tools.app",
+      "permCharacter": "Voir le nom, le serveur, la classe et le niveau de votre personnage",
+      "permDecoder": "Lire des données de jeu sélectionnées (peuvent concerner d'autres joueurs) : {name}",
+      "permNone": "Rien d'autre qu'afficher sa fenêtre",
+      "enabled": "Activé",
+      "enabledTip": "Activé : démarre avec le compteur. Désactivé : reste installé mais ne s'exécute pas.",
+      "showMeter": "Afficher le compteur",
+      "hideClosed": "Masquer quand AION2 est fermé",
+      "hideUnfocused": "Masquer quand AION2 n'est pas au premier plan",
+      "inDock": "Dans le dock des plugins (désactivé : sa propre fenêtre)",
+      "search": "Rechercher",
+      "noMatch": "Aucun plugin ne correspond.",
+      "permsTitle": "Il peut :",
+      "permFps": "Afficher les FPS du jeu (sous Windows, le compteur demande à s'exécuter en tant qu'administrateur pour cela)",
+      "permDeathRecap": "Après qu'un joueur vous a tué : qui c'était et les dégâts qu'il vous a infligés",
+      "permScreenshot": "Faire des captures de sa propre fenêtre, dans le presse-papiers et votre dossier de captures",
+      "testHint": "Des versions précoces que tout le monde peut essayer, signées comme les autres. Elles peuvent changer ou avoir des défauts : dis-nous ce que tu trouves.",
+      "testTitle": "Plugins de test",
+      "autoUpdate": "Mise à jour auto des plugins",
+      "whatsNew": "Nouveautés de la {version}"
+    },
+    "clearOnZone": {
+      "label": "Vider le compteur",
+      "options": {
+        "instance": "En entrant ou sortant d'un donjon",
+        "any": "À chaque changement de zone",
+        "never": "Jamais (garder le dernier combat)"
+      }
+    },
+    "runAsAdmin": "Exécuter en tant qu'administrateur",
+    "runAsAdminTitle": "A2Tools - Exécuter en tant qu'administrateur",
+    "runAsAdminAsk": "Pour afficher les FPS du jeu, le compteur doit s'exécuter en tant qu'administrateur.\n\nRedémarrer le compteur en tant qu'administrateur maintenant ? Windows le demandera à chaque démarrage du compteur. Tu peux le désactiver dans les Paramètres.",
+    "shareData": "Synchroniser les données utiles avec A2Tools",
+    "meterAnchor": {
+      "label": "Le compteur reste fixé en",
+      "options": {
+        "top": "Haut",
+        "middle": "Centre",
+        "bottom": "Bas"
+      }
     }
   },
   "support": {
     "button": "Me soutenir",
     "title": "Soutenir l'auteur sur Ko-fi",
+    "linksHint": "Ko-fi, Patreon, Afdian et PayPal ouvrent leur site dans votre navigateur. Les boutons crypto copient une adresse.",
+    "perks": "Chaque tranche de 5 $ donne 12 mois d'avantages de soutien, jusqu'à 2 ans par paiement. Indiquez le code de votre page de compte A2 Tools dans votre message Ko-fi, ou utilisez la même adresse e-mail sur Patreon.",
     "titleWechat": "Soutenir l'auteur sur WeChat",
     "label": {
       "wechat": "WeChat"
@@ -304,24 +784,34 @@
     "aria": {
       "afdian": "Ouvrir Afdian",
       "kofi": "Ouvrir Ko-fi",
+      "patreon": "Ouvrir Patreon",
       "close": "Fermer la fenêtre de soutien",
       "wechat": "Afficher le QR code WeChat",
       "paypal": "Ouvrir PayPal",
       "btc": "Copier l'adresse BTC",
       "eth": "Copier l'adresse ETH",
       "usdc": "Copier l'adresse USDC"
-    }
+    },
+    "sponsorLabel": "Sponsorisé",
+    "sponsorShort": "Réduisez votre ping avec ExitLag",
+    "sponsorCode": "Code",
+    "sponsorDisclosure": "Lien affilié. A2 Tools touche une commission si vous vous abonnez, ce qui aide à garder ces outils gratuits.",
+    "more": "Plus de façons de faire un don sur a2tools.app"
   },
   "battleTime": {
-    "analysing": "Surveillance des données...",
+    "analysing": "Surveillance",
+    "ttkTooltip": "Durée estimée de tout le combat de boss, d'après ses PV restants et les dégâts du groupe",
     "idle": "Inactif",
-    "notRunning": "AION2 n'est pas lancé",
-    "suspended": "Application en pause",
-    "waitingBoss": "En attente d'un boss"
+    "notRunning": "AION2 fermé",
+    "suspended": "En pause",
+    "waitingBoss": "Pas de boss"
   },
   "meter": {
     "identifyingPlayer": "#{id}",
-    "dpsSuffix": "/s"
+    "a2toolsUser": "Utilise A2Tools",
+    "dpsSuffix": "/s",
+    "others": "Autres",
+    "deaths": "Mort {count} fois dans ce combat"
   },
   "skills": {
     "fallback": "Compétence {code}",
@@ -339,7 +829,7 @@
   },
   "connection": {
     "auto": "Auto",
-    "detecting": "Détection de la connexion AION2...",
+    "detecting": "Connexion...",
     "loopback": "Boucle locale"
   },
   "target": {
@@ -369,6 +859,8 @@
   },
   "presence": {
     "level": "Niv. {level}",
+    "combatPower": "CP {cp}",
+    "gearScore": "GS {gs}",
     "fighting": "Combat {boss}",
     "inGame": "En jeu",
     "elyos": "Élyséens",
@@ -378,6 +870,11 @@
     "tierExpedition": "Expédition",
     "tierConquestNormal": "Conquête (normal)",
     "tierConquestHard": "Conquête (difficile)"
+  },
+  "partyPromo": {
+    "title": "Nouveau : voir les utilisateurs d'A2Tools de votre groupe",
+    "text": "Les membres du groupe qui utilisent aussi A2Tools ont une petite étiquette A2 à côté de leur nom, et vous en avez une à côté du vôtre sur leur meter.",
+    "hint": "Tout membre de votre groupe utilisant A2Tools pourra voir que vous utilisez un meter tiers. Seuls des hachages des noms de personnages et des serveurs sont envoyés. Vous pouvez changer cela à tout moment dans les réglages."
   },
   "discordPromo": {
     "title": "Nouveau : activité Discord",
@@ -392,6 +889,88 @@
     "hint": "Les noms des autres joueurs restent masqués et les mannequins d'entraînement ne sont jamais envoyés. Vous pouvez changer cela à tout moment dans les Paramètres.",
     "signIn": "Se connecter",
     "later": "Plus tard",
-    "close": "Fermer"
+    "close": "Fermer",
+    "guest": "Sans compte",
+    "guestHint": "Pas de compte ? Tes combats peuvent quand même être envoyés, et deviennent les tiens si tu te connectes plus tard."
+  },
+  "npcapPrompt": {
+    "ask": "A2Tools DPS Meter a besoin de Npcap pour lire le trafic réseau du jeu, et Npcap est absent ou ne fonctionne pas.\n\nL'installer maintenant ? Le meter télécharge l'installateur de Npcap depuis npcap.com et l'ouvre. Une fois Npcap installé, le meter commence la capture tout seul.\n\nChoisis Non pour l'installer toi-même depuis https://npcap.com/#download",
+    "downloadFailed": "L'installateur de Npcap n'a pas pu être téléchargé ({error}).\n\nInstalle-le toi-même depuis https://npcap.com/#download, puis rouvre le meter.",
+    "stillMissing": "Npcap ne fonctionne toujours pas. Si son installateur a été fermé avant la fin, installe Npcap depuis https://npcap.com/#download, puis rouvre le meter."
+  },
+  "pluginUpdatePrompt": {
+    "title": "A2Tools - Mise à jour de plugin",
+    "one": "Une mise à jour de plugin est disponible :",
+    "many": "Des mises à jour de plugins sont disponibles :",
+    "alsoAsks": "La nouvelle version demande aussi à :",
+    "updateNow": "Mettre à jour maintenant ?",
+    "failed": "Échec de la mise à jour :"
+  },
+  "pluginDock": {
+    "tabs": "Afficher les plugins en onglets",
+    "stack": "Empiler les plugins",
+    "fold": "Replier le dock",
+    "unfold": "Déplier le dock",
+    "hideControls": "Masquer les commandes",
+    "showControls": "Afficher les commandes",
+    "popOut": "Ouvrir dans sa propre fenêtre",
+    "pluginSettings": "Réglages des plugins",
+    "hide": "Masquer (le plugin continue de tourner)",
+    "close": "Masquer le dock (les plugins continuent de tourner)",
+    "hideMeter": "Masquer le compteur DPS",
+    "showMeter": "Afficher le compteur DPS",
+    "settings": "Paramètres du compteur",
+    "opacity": "Opacité du fond",
+    "failed": "Ce plugin n'a pas pu démarrer : {error}"
+  },
+  "sharing": {
+    "title": "Aider à construire les classements ?",
+    "sub": "Choisissez pour commencer. Modifiable à tout moment dans Paramètres → Confidentialité.",
+    "shareTitle": "Partager les combats anonymement",
+    "recommended": "Recommandé",
+    "shareText": "Vos combats de boss rejoignent les journaux publics d'a2tools.app, tous les noms masqués. Aucun compte nécessaire.",
+    "noTitle": "Ne pas partager",
+    "noText": "Rien de vos combats ne quitte ce PC.",
+    "signInBefore": "Vos combats sous votre nom ?",
+    "signIn": "Se connecter avec A2 Tools",
+    "signInAfter": "Les combats partagés avant passent sur votre compte.",
+    "previewTitle": "Un combat partagé sur a2tools.app",
+    "never": "Le nom de votre PC et le nom complet de votre personnage ne sont jamais envoyés.",
+    "policy": "Politique de confidentialité",
+    "continue": "Continuer"
+  },
+  "sharingNotice": {
+    "title": "Vos combats aident à construire les classements",
+    "text": "Les combats de boss que vous terminez sont partagés avec a2tools.app, tous les noms masqués, le vôtre aussi (ex. Na***a). Aucun compte nécessaire, et vous pouvez arrêter à tout moment dans Paramètres → Confidentialité.",
+    "stop": "Arrêter de partager",
+    "details": "Détails",
+    "keep": "Continuer à partager",
+    "stopped": "Partage arrêté. Les combats partagés auparavant sont en cours de suppression sur a2tools.app."
+  },
+  "privacy": {
+    "title": "Confidentialité",
+    "intro": "Ce que ce mètre partage avec a2tools.app. Chaque élément est votre choix.",
+    "share": "Partager les combats de boss anonymement",
+    "shareHint": "À la fin d'un combat de boss, il rejoint les journaux publics et les classements d'a2tools.app. Tous les noms sont masqués, le vôtre aussi. Aucun compte nécessaire.",
+    "signedIn": "Connecté : vos combats de boss sont envoyés sur votre compte A2 Tools (voir Compte A2 Tools).",
+    "never": "Jamais envoyés : le chat, le nom de votre PC, le nom complet de votre personnage. Envoyer les journaux au dev (Avancé) n'envoie que lorsque vous appuyez.",
+    "policy": "Politique de confidentialité complète"
+  },
+  "changelog": {
+    "title": "Nouveautés",
+    "intro": "Les dernières versions, la plus récente en premier.",
+    "allReleases": "Toutes les versions sur GitHub",
+    "installed": "Installée",
+    "available": "Mise à jour disponible",
+    "loading": "Chargement des notes de version…",
+    "none": "Pas encore de notes de version.",
+    "failed": "Impossible de charger les notes de version. Elles sont aussi sur GitHub, ci-dessous."
+  },
+  "footerMenu": {
+    "tip": "Choisissez ce qu'affiche le pied",
+    "ttk": "Temps de kill estimé",
+    "partyTotal": "Total du groupe",
+    "odyle": "Énergie d'Odyle",
+    "ping": "Ping"
   }
 }

@@ -7,8 +7,19 @@ compatibility_date = "2026-09-01"
 workers_dev = false
 preview_urls = false
 
+# CPU time per derive, in ms (the default is 30 000, the most 300 000, on the
+# paid plan). Each call over the service binding is its own invocation and
+# gets this. A big fight (10-18 MB of records) derives in a few seconds
+# natively since the leak check runs in one pass (2026-10-28); before, it ran
+# past 30 s and the upload came back 503. 120 s is headroom, not a target,
+# and still bounds a slice built to keep this Worker busy. CPU is billed as
+# used, so the cap costs nothing on its own.
+[limits]
+cpu_ms = 120_000
+
 [build]
 command = "worker-build --release"
 
 # Secret, set once:  npx wrangler secret put LOG_SERVICE_KEY
+# While the key changes, LOG_SERVICE_KEY_PREVIOUS is accepted too (optional).
 # The same value goes on the site Worker, which sends it on every call.

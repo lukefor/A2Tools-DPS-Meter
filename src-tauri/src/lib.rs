@@ -22,7 +22,7 @@ pub mod rederive;
 pub mod supporters;
 
 // ── desktop only ───────────────────────────────────────────────────────────
-#[cfg(feature = "desktop")]
+#[cfg(feature = "online")]
 pub mod account;
 #[cfg(feature = "desktop")]
 pub mod config;
@@ -33,11 +33,33 @@ pub mod logging;
 #[cfg(feature = "desktop")]
 pub mod platform;
 #[cfg(feature = "desktop")]
+pub mod plugins;
+#[cfg(feature = "desktop")]
+mod tray;
+#[cfg(feature = "online")]
+mod boss_report;
+#[cfg(feature = "online")]
+mod update_check;
+#[cfg(feature = "online")]
+mod supply_report;
+#[cfg(feature = "online")]
+mod party_presence;
+#[cfg(feature = "online")]
+mod presence;
 #[cfg(feature = "desktop")]
 pub mod share;
+#[cfg(feature = "online")]
+pub mod stream_overlay;
+#[cfg(feature = "desktop")]
+mod npcap_setup;
 
 #[cfg(feature = "desktop")]
 mod app;
+
+#[cfg(feature = "desktop")]
+mod atomic_file;
+#[cfg(feature = "desktop")]
+mod blocking;
 
 #[cfg(feature = "desktop")]
 pub use app::run;

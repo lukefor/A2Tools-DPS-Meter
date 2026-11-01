@@ -1,6 +1,9 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::SystemTime;
+
+use serde::{Deserialize, Serialize};
 
 use tracing::info;
 
@@ -18,7 +21,21 @@ const MAX_HISTORY_FIGHTS: usize = 500;
 /// drive prefix. Fight ids and icon keys come from the webview and become
 /// file names under the app data directory.
 pub fn is_plain_name(name: &str) -> bool {
-    !name.is_empty() && !name.contains(['/', '\\', ':', '\0']) && !name.contains("..")
+    !name.is_empty() && !name.contains(['/', '\\', ':', '\0']) && !name.contains("..") && !windows_reserved(name)
+}
+
+/// A name Windows keeps for a device (`CON`, `NUL`, `COM1`...), with or
+/// without an extension, or one ending in a dot or space, which Windows
+/// trims: neither is the file it looks like (security audit L9).
+fn windows_reserved(name: &str) -> bool {
+    if name.ends_with(['.', ' ']) {
+        return true;
+    }
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit())
 }
 
 fn check_id(id: &str) -> Result<(), String> {
@@ -38,15 +55,41 @@ struct DirStamp {
     latest: Option<SystemTime>,
 }
 
+/// The summaries of the fight files, kept beside the folder (`history-index.json`)
+/// so a start reads only the files that are new or changed since: 500 fights
+/// are some 150 MB of JSON, seconds to parse in full. Each entry stands while
+/// its file's size and modified time do.
+#[derive(Default, Serialize, Deserialize)]
+struct SummaryIndex {
+    version: u32,
+    files: HashMap<String, IndexEntry>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct IndexEntry {
+    size: u64,
+    modified_ms: i64,
+    summary: FightSummary,
+}
+
+/// A new version drops every entry: their summaries lack what it adds.
+const INDEX_VERSION: u32 = 4;
+
 /// Manages saving and loading fight records as JSON files.
 pub struct FightHistoryManager {
     history_dir: PathBuf,
+    index_path: PathBuf,
+    /// The index as last read or written, so a rebuild doesn't read it again.
+    index: Mutex<Option<SummaryIndex>>,
     /// Summaries are distilled from every file in `history_dir` — around 13MB
     /// of JSON parsed in full to keep twelve fields per fight, which measured
     /// at ~350ms. The frontend asks for this once per window at startup and
     /// again every 10s in each window, so the answer is cached and rebuilt only
     /// when the directory actually changes.
     cache: Mutex<Option<(DirStamp, Vec<FightSummary>)>>,
+    /// Personal bests (`personal_bests.json`), kept up as the summaries change.
+    bests_path: PathBuf,
+    bests: Mutex<super::personal_bests::PersonalBests>,
 }
 
 impl FightHistoryManager {
@@ -55,7 +98,11 @@ impl FightHistoryManager {
         let _ = std::fs::create_dir_all(&history_dir);
         Self {
             history_dir,
+            index_path: app_data_dir.join("history-index.json"),
+            index: Mutex::new(None),
             cache: Mutex::new(None),
+            bests: Mutex::new(super::personal_bests::PersonalBests::load(&app_data_dir.join("personal_bests.json"))),
+            bests_path: app_data_dir.join("personal_bests.json"),
         }
     }
 
@@ -90,7 +137,7 @@ impl FightHistoryManager {
         let file_path = self.history_dir.join(format!("{}.json", record.id));
         let json = serde_json::to_string_pretty(record)
             .map_err(|e| format!("Serialization error: {}", e))?;
-        std::fs::write(&file_path, json)
+        crate::atomic_file::write(&file_path, json.as_bytes())
             .map_err(|e| format!("Write error: {}", e))?;
         self.invalidate();
         info!("Fight saved: {}", record.id);
@@ -116,30 +163,31 @@ impl FightHistoryManager {
         if self.stamp().count <= keep {
             return;
         }
-        let Ok(entries) = std::fs::read_dir(&self.history_dir) else {
-            return;
-        };
-        let mut fights: Vec<(i64, std::path::PathBuf)> = entries
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e == "json"))
-            .filter_map(|p| {
-                let text = std::fs::read_to_string(&p).ok()?;
-                let summary: FightSummary = serde_json::from_str(&text).ok()?;
-                Some((summary.start_time_ms, p))
-            })
-            .collect();
-        if fights.len() <= keep {
+        // Start times from the index: parsing every file here cost seconds on
+        // each save once the history was full. A fight holding a personal
+        // best is kept: its "open" link stays good. The others' outcomes stay
+        // counted in the bests' totals.
+        let mut fights = self.list_fights();
+        let over = self.stamp().count.saturating_sub(keep);
+        if over == 0 {
             return;
         }
-        fights.sort_by_key(|(start, _)| *start);
-        let doomed = fights.len() - keep;
-        for (_, path) in fights.into_iter().take(doomed) {
+        let mut bests = self.bests.lock().unwrap_or_else(|e| e.into_inner());
+        let spared = bests.fight_ids();
+        fights.retain(|f| !spared.contains(&f.id));
+        fights.sort_by_key(|f| f.start_time_ms);
+        for f in fights.into_iter().take(over) {
+            let path = self.history_dir.join(format!("{}.json", f.id));
             match std::fs::remove_file(&path) {
-                Ok(()) => info!("Pruned old fight {}", path.display()),
+                Ok(()) => {
+                    info!("Pruned old fight {}", path.display());
+                    bests.archive(&f);
+                }
                 Err(e) => tracing::warn!("Could not prune {}: {e}", path.display()),
             }
         }
+        bests.save(&self.bests_path);
+        drop(bests);
         self.invalidate();
     }
 
@@ -158,6 +206,11 @@ impl FightHistoryManager {
         std::fs::remove_file(&file_path)
             .map_err(|e| format!("Delete error: {}", e))?;
         self.invalidate();
+        let mut bests = self.bests.lock().unwrap_or_else(|e| e.into_inner());
+        if bests.forget(id) {
+            bests.save(&self.bests_path);
+        }
+        drop(bests);
         info!("Fight deleted: {}", id);
         Ok(())
     }
@@ -175,43 +228,66 @@ impl FightHistoryManager {
         if let Ok(mut cache) = self.cache.lock() {
             *cache = Some((stamp, summaries.clone()));
         }
+        let mut bests = self.bests.lock().unwrap_or_else(|e| e.into_inner());
+        if bests.update(&summaries) {
+            bests.save(&self.bests_path);
+        }
         summaries
     }
 
-    fn read_all_summaries(&self) -> Vec<FightSummary> {
-        let mut summaries = Vec::new();
-        let entries = match std::fs::read_dir(&self.history_dir) {
-            Ok(e) => e,
-            Err(_) => return summaries,
-        };
+    /// Every personal best, the history's newest fights taken in first.
+    pub fn personal_bests(&self) -> Vec<super::personal_bests::Encounter> {
+        self.list_fights();
+        let bests = self.bests.lock().unwrap_or_else(|e| e.into_inner());
+        bests.encounters.values().cloned().collect()
+    }
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e == "json") {
-                if let Ok(json) = std::fs::read_to_string(&path) {
-                    if let Ok(record) = serde_json::from_str::<FightRecord>(&json) {
-                        let member_jobs = record.member_jobs();
-                        summaries.push(FightSummary {
-                            id: record.id,
-                            boss_name: record.boss_name,
-                            target_id: record.target_id,
-                            start_time_ms: record.start_time_ms,
-                            duration_ms: record.duration_ms,
-                            total_damage: record.total_damage,
-                            jobs: record.jobs,
-                            job_ids: record.job_ids,
-                            is_train: record.is_train,
-                            is_live: false,
-                            app_version: record.app_version,
-                            mob_code: record.mob_code,
-                            dungeon_id: record.dungeon_id,
-                            member_jobs,
-                        });
-                    }
+    /// Every fight's summary: from the index while its file is unchanged,
+    /// else read from the file, and the index written back when it changed.
+    fn read_all_summaries(&self) -> Vec<FightSummary> {
+        let mut guard = self.index.lock().unwrap_or_else(|e| e.into_inner());
+        let index = guard.get_or_insert_with(|| {
+            std::fs::read(&self.index_path)
+                .ok()
+                .and_then(|b| serde_json::from_slice::<SummaryIndex>(&b).ok())
+                .filter(|i| i.version == INDEX_VERSION)
+                .unwrap_or(SummaryIndex { version: INDEX_VERSION, files: HashMap::new() })
+        });
+        let mut files = HashMap::new();
+        let mut changed = false;
+        if let Ok(entries) = std::fs::read_dir(&self.history_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.extension().is_some_and(|e| e == "json") {
+                    continue;
+                }
+                let Some(name) = path.file_stem().and_then(|n| n.to_str()).map(str::to_string) else { continue };
+                let Ok(meta) = entry.metadata() else { continue };
+                let modified_ms = meta
+                    .modified()
+                    .ok()
+                    .and_then(|m| m.duration_since(SystemTime::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_millis() as i64);
+                if let Some(kept) = index.files.get(&name).filter(|e| e.size == meta.len() && e.modified_ms == modified_ms) {
+                    files.insert(name, kept.clone());
+                    continue;
+                }
+                let Ok(json) = std::fs::read_to_string(&path) else { continue };
+                let Ok(record) = serde_json::from_str::<FightRecord>(&json) else { continue };
+                files.insert(name, IndexEntry { size: meta.len(), modified_ms, summary: super::summary::of(&record) });
+                changed = true;
+            }
+        }
+        changed |= files.len() != index.files.len();
+        index.files = files;
+        if changed {
+            if let Ok(bytes) = serde_json::to_vec(&*index) {
+                if let Err(e) = crate::atomic_file::write(&self.index_path, &bytes) {
+                    tracing::warn!("History index not written: {e}");
                 }
             }
         }
-
+        let mut summaries: Vec<FightSummary> = index.files.values().map(|e| e.summary.clone()).collect();
         summaries.sort_by(|a, b| b.start_time_ms.cmp(&a.start_time_ms));
         summaries
     }
@@ -242,5 +318,23 @@ mod tests {
         assert!(dir.join("keep.json").exists());
         assert!(history.load_fight("../keep").is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A copy of a real app data folder (A2_HISTORY_COPY, with its
+    /// `history`): the first list reads every file, the next one (a new
+    /// start, the index on disk) none, and both give the same summaries.
+    #[test]
+    fn the_index_spares_a_start_reading_every_fight() {
+        let Some(dir) = std::env::var_os("A2_HISTORY_COPY").map(PathBuf::from) else { return };
+        let _ = std::fs::remove_file(dir.join("history-index.json"));
+        let t = std::time::Instant::now();
+        let first = FightHistoryManager::new(dir.clone()).list_fights();
+        let cold = t.elapsed();
+        let t = std::time::Instant::now();
+        let again = FightHistoryManager::new(dir.clone()).list_fights();
+        let warm = t.elapsed();
+        eprintln!("{} fights: {cold:?} without the index, {warm:?} with it", first.len());
+        assert_eq!(serde_json::to_string(&first).unwrap(), serde_json::to_string(&again).unwrap());
+        assert!(warm * 5 < cold);
     }
 }

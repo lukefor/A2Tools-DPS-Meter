@@ -9,12 +9,18 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
   const deleteToggleBtn = panel.querySelector(".historyDeleteToggle");
   const viewToggleEl = panel.querySelector(".historyViewToggle");
   const viewBtns = viewToggleEl ? [...viewToggleEl.querySelectorAll(".historyViewBtn")] : [];
-  const filterBossEl = panel.querySelector(".historyFilterBoss");
+  const searchEl = panel.querySelector(".historyFilterSearch");
+  const characterEl = panel.querySelector(".historyFilterCharacter");
+  const difficultyEl = panel.querySelector(".historyFilterDifficulty");
+  const periodEl = panel.querySelector(".historyFilterPeriod");
+  const sortEl = panel.querySelector(".historyFilterSort");
+  const killsOnlyEl = panel.querySelector(".historyKillsOnlyBox");
+  const bestsSortEl = panel.querySelector(".historyBestsSort");
+  const tabBtns = [...panel.querySelectorAll(".historyTab")];
   const filterPlayerEl = panel.querySelector(".historyFilterPlayer");
   const filterPlayerTrigger = filterPlayerEl?.querySelector(".historyClassDropdownTrigger");
   const filterPlayerLabel = filterPlayerEl?.querySelector(".historyClassDropdownLabel");
   const filterPlayerMenu = filterPlayerEl?.querySelector(".historyClassDropdownMenu");
-  const filterDateEl = panel.querySelector(".historyFilterDate");
 
   // Map from the Korean class name stored in fight records → stable enum key used for i18n
   const JOB_KEY_MAP = {
@@ -35,10 +41,30 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
   const CLASS_ICON_JOBS = new Set(["검성", "궁성", "마도성", "살성", "수호성", "정령성", "치유성", "호법성", "권성"]);
 
   let showDeleteMode = false;
-  let filterBoss = "";
   let filterPlayer = "";
-  let filterDate = "";
   let classDropdownOpen = false;
+  // Search (a boss or dungeon's name), your character ("name|server"), a
+  // difficulty's label, a period in days (0: all), the order, and wipes hidden.
+  let search = "";
+  let character = null; // null: not chosen yet (your latest character)
+  let difficulty = "";
+  let periodDays = 0;
+  let sortBy = "newest";
+  let killsOnly = false;
+  // Personal bests' dungeons: "recent" (most recent record first) or "tier".
+  const BESTS_SORT_KEY = "historyBestsSort";
+  let bestsSort = (() => {
+    try { return localStorage.getItem(BESTS_SORT_KEY) === "tier" ? "tier" : "recent"; } catch { return "recent"; }
+  })();
+
+  // "fights" or "bests" (personal bests).
+  const TAB_KEY = "historyTab";
+  let tab = (() => {
+    try { return localStorage.getItem(TAB_KEY) === "bests" ? "bests" : "fights"; } catch { return "fights"; }
+  })();
+  // Personal bests (get_personal_bests), and the fights that hold one.
+  let bests = [];
+  let bestIds = new Set();
 
   // View mode: "dungeon" (each dungeon and difficulty a collapsible section,
   // the default), "grouped" (each boss a section) or "list" (flat, newest first).
@@ -149,19 +175,93 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
   let lastVisible = [];
   let loadingMore = false;
 
-  const populateDropdowns = (fights) => {
-    if (!filterBossEl || !filterPlayerEl || !filterDateEl) return;
-    const allOption = (label) => `<option value="">${label}</option>`;
+  // A fight's character, as the filter names it: "name|server".
+  const charKey = (name, server) => `${name}|${Number(server) || 0}`;
+  // Whether a fight or best is the chosen character's. One saved without
+  // your server (before #128's fix) goes with the character of its name.
+  const isCharacter = (name, server) => {
+    if (!character) return true;
+    const [n, sv] = character.split("|");
+    return name === n && (!Number(server) || Number(server) === Number(sv));
+  };
+  // The name, and its server's number only where two of your characters
+  // share the name.
+  const charLabel = (key, keys) => {
+    const [name, server] = key.split("|");
+    const twin = keys.some((k) => k !== key && k.split("|")[0] === name);
+    return twin && Number(server) ? `${name} (${server})` : name;
+  };
+  // A fight's difficulty: its boss's level (Nightmare) or its dungeon's tier.
+  const tierOf = (f) => {
+    const npcLevel = window.i18n?.getNpcLevel?.(Number(f.mobCode)) || "";
+    if (npcLevel) return { key: "level", label: npcLevel };
+    return Number(f.dungeonId) ? window.i18n?.getDungeonDifficulty?.(Number(f.dungeonId)) : null;
+  };
+  const option = (value, label, selected) => Object.assign(document.createElement("option"), { value, textContent: label, selected });
 
-    const bossNames = [...new Set(fights.map((f) => f.bossName || "").filter(Boolean))].sort();
-    filterBossEl.innerHTML = allOption(t("history.filterBoss", "All bosses"));
-    bossNames.forEach((name) => {
-      const opt = document.createElement("option");
-      opt.value = name;
-      opt.textContent = name;
-      if (name === filterBoss) opt.selected = true;
-      filterBossEl.appendChild(opt);
-    });
+  // Your characters: names that were surely you somewhere (a dungeon, or a
+  // fight that recorded you). An open-world fight's name that isn't one of
+  // them is a stranger's fight the meter saw, credited to no one.
+  let yourNames = new Set();
+  const youIn = (f) => (f.myName && (f.myCertain || yourNames.has(f.myName)) ? f.myName : "");
+
+  const populateDropdowns = (fights) => {
+    if (!filterPlayerEl) return;
+    yourNames = new Set([...fights.filter((f) => f.myCertain && f.myName).map((f) => f.myName), ...bests.map((e) => e.character)]);
+    // Your characters, the latest first; your latest picked to start with.
+    if (characterEl) {
+      const seen = [];
+      const add = (name, server) => {
+        if (!name) return;
+        // No server: the name's character if there is one, listed once.
+        if (!Number(server) && seen.some((k) => k.split("|")[0] === name)) return;
+        const key = charKey(name, server);
+        if (seen.includes(key)) return;
+        const bare = seen.indexOf(charKey(name, 0));
+        if (bare >= 0) seen[bare] = key;
+        else seen.push(key);
+      };
+      for (const f of [...fights].sort((a, b) => startMs(b) - startMs(a))) add(youIn(f), f.myServer);
+      for (const e of bests) add(e.character, e.server);
+      if (character === null) character = seen[0] || "";
+      characterEl.replaceChildren(
+        option("", t("history.allCharacters", "All characters"), character === ""),
+        ...seen.map((key) => option(key, charLabel(key, seen), key === character)),
+      );
+    }
+    if (difficultyEl) {
+      const tiers = new Set();
+      for (const f of fights) {
+        const tier = tierOf(f);
+        if (tier) tiers.add(tier.label);
+      }
+      difficultyEl.replaceChildren(
+        option("", t("history.allDifficulties", "All difficulties"), difficulty === ""),
+        ...[...tiers].sort().map((label) => option(label, label, label === difficulty)),
+      );
+    }
+    if (periodEl) {
+      periodEl.replaceChildren(...[
+        [0, t("history.periodAll", "All time")],
+        [1, t("history.periodToday", "Last 24 hours")],
+        [7, t("history.period7", "Last 7 days")],
+        [30, t("history.period30", "Last 30 days")],
+      ].map(([v, label]) => option(String(v), label, v === periodDays)));
+    }
+    if (bestsSortEl) {
+      bestsSortEl.replaceChildren(
+        option("recent", t("history.sortRecent", "Most recent"), bestsSort === "recent"),
+        option("tier", t("history.sortTier", "Dungeon tier"), bestsSort === "tier"),
+      );
+    }
+    if (sortEl) {
+      sortEl.replaceChildren(...[
+        ["newest", t("history.sortNewest", "Newest")],
+        ["fastest", t("history.sortFastest", "Fastest kill")],
+        ["partyDps", t("history.sortPartyDps", "Party DPS")],
+        ["myDps", t("history.sortMyDps", "Your DPS")],
+      ].map(([v, label]) => option(v, label, v === sortBy)));
+    }
 
     // Custom class dropdown
     if (filterPlayerMenu) {
@@ -198,34 +298,45 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
         if (filterPlayerLabel) filterPlayerLabel.textContent = t("history.filterPlayer", "All classes");
       }
     }
-
-    const dates = [...new Set(fights.map((f) => formatDate(f.startTimeMs).slice(0, 10)).filter((d) => d !== "-"))].sort().reverse();
-    filterDateEl.innerHTML = allOption(t("history.filterDate", "All dates"));
-    dates.forEach((date) => {
-      const opt = document.createElement("option");
-      opt.value = date;
-      opt.textContent = date;
-      if (date === filterDate) opt.selected = true;
-      filterDateEl.appendChild(opt);
-    });
   };
 
+  // Damage per second over the fight: the party's, and yours.
+  const partyDps = (f) => (Number(f.durationMs) > 0 ? (Number(f.totalDamage) || 0) * 1000 / Number(f.durationMs) : 0);
+  const myDps = (f) => (Number(f.durationMs) > 0 ? (Number(f.myDamage) || 0) * 1000 / Number(f.durationMs) : 0);
+  // What the search matches: the boss and its dungeon, in the shown language.
+  const searchText = (f) => `${f.bossName || ""} ${dungeonTitle(f.dungeonId, f.mobCode)}`.toLowerCase();
+
   const applyFilters = (fights) => {
-    return fights.filter((f) => {
+    const since = periodDays ? Date.now() - periodDays * 86_400_000 : 0;
+    const needle = search.trim().toLowerCase();
+    const shown = fights.filter((f) => {
       if (f.isTrain && !showTraining) return false;
-      if (filterBoss && (f.bossName || "") !== filterBoss) return false;
       if (filterPlayer) {
         const jobs = Array.isArray(f.jobs) ? f.jobs : [];
         if (!jobs.includes(filterPlayer)) return false;
       }
-      if (filterDate && formatDate(f.startTimeMs).slice(0, 10) !== filterDate) return false;
+      if (character && youIn(f) && !isCharacter(f.myName, f.myServer)) return false;
+      if (difficulty && tierOf(f)?.label !== difficulty) return false;
+      if (since && startMs(f) < since) return false;
+      if (killsOnly && (f.outcome === "wipe" || !Number(f.dungeonId))) return false;
+      if (needle && !searchText(f).includes(needle)) return false;
       return true;
     });
+    // Fastest: kills first, the quickest of them; the rest after, newest first.
+    const killed = (f) => f.outcome !== "wipe" && Number(f.dungeonId) > 0;
+    const order = {
+      newest: (a, b) => startMs(b) - startMs(a),
+      fastest: (a, b) => (killed(b) - killed(a)) || (killed(a) ? Number(a.durationMs) - Number(b.durationMs) : startMs(b) - startMs(a)),
+      partyDps: (a, b) => partyDps(b) - partyDps(a),
+      myDps: (a, b) => myDps(b) - myDps(a),
+    }[sortBy] || ((a, b) => startMs(b) - startMs(a));
+    return shown.sort(order);
   };
 
   // Status line for the dry run. Created lazily so the panel markup does not
   // have to carry an element that is empty almost always.
-  const showNote = (text, isError) => {
+  // `link`: a site URL in the text, made clickable (opens in the browser).
+  const showNote = (text, isError, link) => {
     const panel = document.querySelector(".historyPanel");
     if (!panel) return;
     let note = panel.querySelector(".historyPreviewNote");
@@ -240,6 +351,18 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
       }
     }
     note.textContent = text;
+    const at = link && isSiteUrl(link) ? text.indexOf(link) : -1;
+    if (at >= 0) {
+      const a = document.createElement("a");
+      a.href = link;
+      a.textContent = link;
+      a.className = "historyNoteLink";
+      a.addEventListener("click", (event) => {
+        event.preventDefault();
+        window.javaBridge?.openBrowser?.(link);
+      });
+      note.replaceChildren(text.slice(0, at), a, text.slice(at + link.length));
+    }
     note.classList.toggle("isError", !!isError);
     note.style.display = text ? "block" : "none";
   };
@@ -298,7 +421,8 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
             ? `Uploaded as private. Link copied: ${r.url}`
             : `Uploaded. Link copied: ${r.url}`
         ),
-        false
+        false,
+        r.url
       );
     } catch (err) {
       const msg = typeof err === "string" ? err : err?.message || String(err);
@@ -372,9 +496,14 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
       }
     }
     // Every row names its dungeon tier, so a Hard clear stands out in any view.
-    const tier = fight.dungeonId
-      ? window.i18n?.getDungeonDifficulty?.(Number(fight.dungeonId))
-      : null;
+    // Where one instance has bosses of several levels (Nightmare: Gatekeeper
+    // Pinopi at Level 1-10), the boss's own level, from its NPC code.
+    const npcLevel = window.i18n?.getNpcLevel?.(Number(fight.mobCode)) || "";
+    const tier = npcLevel
+      ? { key: "level", label: npcLevel }
+      : fight.dungeonId
+        ? window.i18n?.getDungeonDifficulty?.(Number(fight.dungeonId))
+        : null;
     if (tier) {
       const badge = document.createElement("span");
       badge.className = `difficultyBadge difficulty-${tier.key}`;
@@ -385,6 +514,20 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
       const badge = document.createElement("span");
       badge.className = "historyTrainBadge";
       badge.textContent = t("history.trainBadge", "Training");
+      nameEl.appendChild(badge);
+    }
+    // In a dungeon: a wipe, and a fight holding one of your bests.
+    if (Number(fight.dungeonId) > 0 && fight.outcome === "wipe") {
+      const badge = document.createElement("span");
+      badge.className = "historyWipeBadge";
+      badge.textContent = t("history.wipe", "Wipe");
+      nameEl.appendChild(badge);
+    }
+    if (bestIds.has(fight.id)) {
+      const badge = document.createElement("span");
+      badge.className = "historyPbBadge";
+      badge.textContent = t("history.pb", "PB");
+      badge.title = t("history.pbTip", "One of your personal bests");
       nameEl.appendChild(badge);
     }
 
@@ -405,7 +548,33 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
 
     if (!grouped) metaEl.appendChild(timeEl);
     metaEl.appendChild(durEl);
-    metaEl.appendChild(dmgEl);
+    // The party's DPS, and yours with your share of the damage; the damage
+    // alone where the fight has no length yet.
+    if (Number(fight.durationMs) > 0) {
+      const stat = (cls, label, value) => {
+        const el = document.createElement("span");
+        el.className = `historyRowStat ${cls}`;
+        const b = document.createElement("b");
+        b.textContent = formatDamage(value);
+        el.append(`${label} `, b);
+        return el;
+      };
+      metaEl.appendChild(stat("historyRowParty", t("history.party", "Party"), partyDps(fight)));
+      if (Number(fight.myDamage) > 0 && youIn(fight)) {
+        const mine = stat("historyRowMine", t("history.you", "You"), myDps(fight));
+        const share = Number(fight.totalDamage) > 0 ? Math.round(Number(fight.myDamage) * 100 / Number(fight.totalDamage)) : 0;
+        if (share > 0 && share < 100) {
+          const shareEl = document.createElement("span");
+          shareEl.className = "historyRowShare";
+          shareEl.textContent = ` ${share}%`;
+          mine.appendChild(shareEl);
+        }
+        metaEl.appendChild(mine);
+      }
+      dmgEl.title = t("history.totalDamage", "Total damage");
+    } else {
+      metaEl.appendChild(dmgEl);
+    }
 
     const iconsEl = document.createElement("div");
     iconsEl.className = "historyRowIcons";
@@ -433,7 +602,10 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
     actionsEl.className = "historyRowActions";
 
     // Training dummies are not logs, and a fight still in progress has no end.
-    if (!fight.isLive && !fight.isTrain) {
+    // Only dungeon fights are logs: open-world bosses stay in your history
+    // (share::is_instanced). The private build uploads nothing
+    // (build_features); preview stays.
+    if (!fight.isLive && !fight.isTrain && Number(fight.dungeonId) && window.a2Build?.online !== false) {
       const uploadBtn = document.createElement("button");
       uploadBtn.className = "historyPreviewBtn historyUploadBtn";
       uploadBtn.type = "button";
@@ -525,6 +697,76 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
 
   const startMs = (f) => Number(f.startTimeMs) || 0;
 
+  // "3 hours ago", in the meter's language.
+  const ago = (ms) => {
+    const lang = window.i18n?.getLanguage?.() || "en";
+    let v = (Number(ms) - Date.now()) / 1000;
+    const steps = [["second", 60], ["minute", 60], ["hour", 24], ["day", 30], ["month", 12], ["year", Infinity]];
+    for (const [unit, size] of steps) {
+      if (Math.abs(v) < size) {
+        try {
+          return new Intl.RelativeTimeFormat(lang, { numeric: "auto" }).format(Math.round(v), unit);
+        } catch {
+          return formatDate(ms);
+        }
+      }
+      v /= size;
+    }
+    return formatDate(ms);
+  };
+
+  // A section at a glance: when it was last fought, its quickest fight and
+  // its most damage. No quickest where fights are cut off as players come and
+  // go (the open world, training): 00:05 there is no clear.
+  const groupSummary = (fights, { best = true } = {}) => {
+    // Kills only (a wipe at 00:12 is no clear), and in a dungeon its last
+    // boss's where there is one: the clear players time.
+    const kills = fights.filter((f) => !f.isLive && Number(f.durationMs) > 0 && f.outcome !== "wipe");
+    const finals = kills.filter((f) => f.finalBoss);
+    const done = finals.length ? finals : kills;
+    const parts = [ago(Math.max(...fights.map(startMs)))];
+    if (best && done.length) {
+      const best = Math.min(...done.map((f) => Number(f.durationMs)));
+      parts.push(t("history.best", "Best {time}").replace("{time}", formatTime(best)));
+    }
+    const top = Math.max(...fights.map((f) => Number(f.totalDamage) || 0));
+    if (top > 0) parts.push(t("history.top", "Top {damage}").replace("{damage}", formatDamage(top)));
+    return parts.join(" · ");
+  };
+
+  // Rows shown before a "Show all" in a section, or a boss inside one.
+  const SHOWN_ROWS = 5;
+  // A list of fights: the most recent few, then the rest behind a button.
+  const rowsWithMore = (fights, rowOptions) => {
+    const frag = document.createDocumentFragment();
+    const list = document.createElement("div");
+    const fill = (all) => {
+      list.replaceChildren(...(all ? fights : fights.slice(0, SHOWN_ROWS)).map((f) => buildRow(f, rowOptions)));
+    };
+    fill(false);
+    frag.appendChild(list);
+    if (fights.length > SHOWN_ROWS) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "historyShowAll";
+      let all = false;
+      const label = () => {
+        more.textContent = all
+          ? t("history.showFewer", "Show fewer")
+          : t("history.showAll", "Show all {n}").replace("{n}", fights.length);
+        more.setAttribute("aria-expanded", String(all));
+      };
+      label();
+      more.addEventListener("click", () => {
+        all = !all;
+        fill(all);
+        label();
+      });
+      frag.appendChild(more);
+    }
+    return frag;
+  };
+
   const buildGroup = (group) => {
     // Most recent run first within a section.
     group.fights.sort((a, b) => startMs(b) - startMs(a));
@@ -532,24 +774,30 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
     const wrap = document.createElement("div");
     wrap.className = "historyGroup";
 
-    const header = document.createElement("div");
+    // A button: reached with Tab, and it says whether it is open.
+    const header = document.createElement("button");
+    header.type = "button";
     header.className = "historyGroupHeader";
 
     const chevron = document.createElement("span");
     chevron.className = "historyGroupChevron";
-    chevron.innerHTML = `<svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M0 0l5 6 5-6z" fill="currentColor"/></svg>`;
+    chevron.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>`;
 
-    const nameEl = document.createElement("div");
+    const titleEl = document.createElement("span");
+    titleEl.className = "historyGroupTitle";
+    const nameEl = document.createElement("span");
     nameEl.className = "historyGroupName";
     nameEl.textContent = group.name;
+    const summaryEl = document.createElement("span");
+    summaryEl.className = "historyGroupSummary";
+    summaryEl.textContent = groupSummary(group.fights, { best: group.byDungeon && !group.training && !group.openWorld });
+    titleEl.append(nameEl, summaryEl);
 
     const countEl = document.createElement("span");
     countEl.className = "historyGroupCount";
     countEl.textContent = fightCountLabel(group.fights.length);
 
-    header.appendChild(chevron);
-    header.appendChild(nameEl);
-    header.appendChild(countEl);
+    header.append(chevron, titleEl, countEl);
 
     const childWrap = document.createElement("div");
     childWrap.className = "historyGroupChildren";
@@ -557,37 +805,95 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
     const renderChildren = () => {
       if (childWrap.childElementCount) return;
       const frag = document.createDocumentFragment();
-      group.fights.forEach((f) => frag.appendChild(buildRow(f, group.rowOptions)));
+      // A dungeon's bosses, each a small section of its own, the most recent
+      // first: its rows then lead with their date, not the boss's name again.
+      const bosses = new Map();
+      if (group.byDungeon) {
+        group.fights.forEach((f) => {
+          const key = f.bossName || `Boss #${f.targetId}`;
+          if (!bosses.has(key)) bosses.set(key, []);
+          bosses.get(key).push(f);
+        });
+      }
+      if (bosses.size > 1) {
+        // The dungeon's last boss leads: the one players come for. Not in a
+        // raid or on Hard, where each boss stands on its own.
+        const allEqual = group.fights.some((f) => f.raid || tierOf(f)?.key === "hard");
+        const final = (fights) => fights.some((f) => f.finalBoss);
+        const ordered = allEqual ? [...bosses] : [...bosses].sort(([, a], [, b]) => final(b) - final(a));
+        ordered.forEach(([boss, fights]) => {
+          // A boss fought once: a row with its name, no heading over it.
+          if (fights.length === 1) {
+            frag.appendChild(buildRow(fights[0], { child: true }));
+            return;
+          }
+          const sub = document.createElement("div");
+          sub.className = "historySubGroup";
+          const subHead = document.createElement("div");
+          subHead.className = "historySubGroupHeader";
+          const subName = document.createElement("span");
+          subName.className = "historySubGroupName";
+          subName.textContent = boss;
+          if (!allEqual && final(fights)) {
+            const chip = document.createElement("span");
+            chip.className = "historyFinalBadge";
+            chip.textContent = t("history.finalBoss", "Final boss");
+            subName.appendChild(chip);
+          }
+          const subMeta = document.createElement("span");
+          subMeta.className = "historySubGroupMeta";
+          subMeta.textContent = `${fightCountLabel(fights.length)} · ${groupSummary(fights)}`;
+          subHead.append(subName, subMeta);
+          sub.append(subHead, rowsWithMore(fights, { grouped: true }));
+          frag.appendChild(sub);
+        });
+      } else {
+        frag.appendChild(rowsWithMore(group.fights, bosses.size === 1 ? { grouped: true } : group.rowOptions));
+      }
       childWrap.appendChild(frag);
     };
 
-    const expanded = expandedGroups.has(group.name);
-    header.classList.toggle("expanded", expanded);
-    childWrap.style.display = expanded ? "" : "none";
-    if (expanded) renderChildren();
-
-    header.addEventListener("click", () => {
-      const nowExpanded = !expandedGroups.has(group.name);
-      if (nowExpanded) {
+    const setOpen = (open) => {
+      if (open) {
         expandedGroups.add(group.name);
         renderChildren();
       } else {
         expandedGroups.delete(group.name);
       }
-      header.classList.toggle("expanded", nowExpanded);
-      childWrap.style.display = nowExpanded ? "" : "none";
+      header.classList.toggle("expanded", open);
+      header.setAttribute("aria-expanded", String(open));
+      childWrap.style.display = open ? "" : "none";
+    };
+    setOpen(expandedGroups.has(group.name));
+    header.addEventListener("click", () => {
+      setOpen(!expandedGroups.has(group.name));
+      syncExpandAll();
     });
+    wrap.setOpen = setOpen;
 
     wrap.appendChild(header);
     wrap.appendChild(childWrap);
     return wrap;
   };
 
+  // Expand all / Collapse all, above the sections.
+  let groupEls = [];
+  let expandAllBtn = null;
+  const syncExpandAll = () => {
+    if (!expandAllBtn) return;
+    const anyClosed = groupEls.some((g) => !expandedGroups.has(g.groupName));
+    expandAllBtn.textContent = anyClosed ? t("history.expandAll", "Expand all") : t("history.collapseAll", "Collapse all");
+  };
+
   // A dungeon section's title: the dungeon and its difficulty, or Open world.
-  const dungeonTitle = (dungeonId) => {
+  // An instance the dungeon table doesn't name (Nightmare, 200003) takes the
+  // category the NPC table gives its boss.
+  const dungeonTitle = (dungeonId, mobCode) => {
     const id = Number(dungeonId) || 0;
     if (!id) return t("history.openWorld", "Open world");
-    return window.i18n?.getDungeonLabel?.(id) || `#${id}`;
+    return window.i18n?.getDungeonLabel?.(id)
+      || window.i18n?.getNpcCategory?.(Number(mobCode))
+      || `#${id}`;
   };
 
   const renderGrouped = (visible, byDungeon) => {
@@ -595,27 +901,362 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
     visible.forEach((f) => {
       // Keyed by what the header says, so two instance ids with the same name
       // and difficulty share one section.
-      const key = byDungeon ? dungeonTitle(f.dungeonId) : (f.bossName || `Boss #${f.targetId}`);
+      // Training dummies are a section of their own, not the open world's.
+      const training = byDungeon && !!f.isTrain;
+      const key = training
+        ? t("history.training", "Training")
+        : byDungeon ? dungeonTitle(f.dungeonId, f.mobCode) : (f.bossName || `Boss #${f.targetId}`);
       let g = groups.get(key);
       if (!g) {
-        g = { name: key, fights: [], rowOptions: byDungeon ? { child: true } : { grouped: true } };
+        g = {
+          name: key, fights: [], byDungeon, training,
+          openWorld: byDungeon && !training && !(Number(f.dungeonId) > 0),
+          rowOptions: byDungeon ? { child: true } : { grouped: true },
+        };
         groups.set(key, g);
       }
       g.fights.push(f);
     });
-    // Sections ordered by their most recent run.
+    // Sections ordered by their most recent run; training last.
     const ordered = [...groups.values()].sort(
-      (a, b) => Math.max(...b.fights.map(startMs)) - Math.max(...a.fights.map(startMs))
+      (a, b) => (a.training - b.training) || (Math.max(...b.fights.map(startMs)) - Math.max(...a.fights.map(startMs)))
     );
     const frag = document.createDocumentFragment();
-    ordered.forEach((g) => frag.appendChild(buildGroup(g)));
+    const tools = document.createElement("div");
+    tools.className = "historyGroupTools";
+    expandAllBtn = document.createElement("button");
+    expandAllBtn.type = "button";
+    expandAllBtn.className = "historyExpandAll";
+    expandAllBtn.addEventListener("click", () => {
+      const open = groupEls.some((g) => !expandedGroups.has(g.groupName));
+      groupEls.forEach((g) => g.setOpen(open));
+      syncExpandAll();
+    });
+    tools.appendChild(expandAllBtn);
+    frag.appendChild(tools);
+    groupEls = ordered.map((g) => {
+      const el = buildGroup(g);
+      el.groupName = g.name;
+      return el;
+    });
+    groupEls.forEach((el) => frag.appendChild(el));
+    syncExpandAll();
     listEl.appendChild(frag);
+  };
+
+  // ---- Personal bests ----
+
+  // An encounter's live counts: the fights still in the history, by outcome.
+  const liveCounts = (e) => {
+    const c = { kills: 0, wipes: 0, unconfirmed: 0 };
+    for (const f of allFights) {
+      if (f.isTrain || f.myName !== e.character || (Number(f.myServer) && Number(f.myServer) !== Number(e.server))
+        || Number(f.dungeonId) !== Number(e.dungeonId) || Number(f.mobCode) !== Number(e.mobCode)) continue;
+      c[f.outcome === "kill" ? "kills" : f.outcome === "wipe" ? "wipes" : "unconfirmed"] += 1;
+    }
+    return c;
+  };
+
+  // One row per boss, merged across characters where "All characters" is
+  // chosen: each best then the best of any of them, with who set it.
+  const bestRows = () => {
+    const needle = search.trim().toLowerCase();
+    const better = (a, b, lower) => {
+      if (!a) return b;
+      if (!b) return a;
+      if (a.confirmed !== b.confirmed) return a.confirmed ? a : b;
+      return (lower ? b.value < a.value : b.value > a.value) ? b : a;
+    };
+    const rows = new Map();
+    for (const e of bests) {
+      if (!isCharacter(e.character, e.server)) continue;
+      const tier = tierOf(e);
+      if (difficulty && tier?.label !== difficulty) continue;
+      if (filterPlayer && e.myDps?.job !== filterPlayer && e.fastest?.job !== filterPlayer) continue;
+      if (needle && !`${e.bossName} ${dungeonTitle(e.dungeonId, e.mobCode)}`.toLowerCase().includes(needle)) continue;
+      const key = `${e.dungeonId}|${e.mobCode}`;
+      const live = liveCounts(e);
+      const counts = {
+        kills: (e.archived?.kills || 0) + live.kills,
+        wipes: (e.archived?.wipes || 0) + live.wipes,
+        unconfirmed: (e.archived?.unconfirmed || 0) + live.unconfirmed,
+      };
+      const tag = (b) => b && { ...b, who: e.character };
+      const row = rows.get(key);
+      if (!row) {
+        rows.set(key, { ...e, counts, fastest: tag(e.fastest), myDps: tag(e.myDps), partyDps: tag(e.partyDps) });
+        continue;
+      }
+      row.fastest = better(row.fastest, tag(e.fastest), true);
+      row.myDps = better(row.myDps, tag(e.myDps), false);
+      row.partyDps = better(row.partyDps, tag(e.partyDps), false);
+      for (const k of Object.keys(counts)) row.counts[k] += counts[k];
+    }
+    return [...rows.values()];
+  };
+
+  const openBest = async (best) => {
+    const raw = best && await window.javaBridge?.getFightDetails?.(best.fightId);
+    if (!raw) {
+      showNote(t("history.fightGone", "That fight is no longer saved; its best is kept."), false);
+      return;
+    }
+    try {
+      onOpenFight?.(typeof raw === "string" ? JSON.parse(raw) : raw);
+    } catch {}
+  };
+
+  // A best's cell: its figure (with "?" while the kill wasn't recorded), and
+  // under it the date, or your class and character.
+  const bestCell = (best, value, sub) => {
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "historyBestCell";
+    if (!best) {
+      cell.disabled = true;
+      cell.textContent = "–";
+      return cell;
+    }
+    const big = document.createElement("span");
+    big.className = "historyBestValue";
+    big.textContent = value;
+    if (!best.confirmed) {
+      const q = document.createElement("span");
+      q.className = "historyBestUnconfirmed";
+      q.textContent = "?";
+      big.appendChild(q);
+      cell.title = t("history.unconfirmedTip", "The kill wasn't recorded (a fight from before 2.0.87): judged from the damage dealt.");
+    } else {
+      cell.title = t("history.openBest", "Open this fight");
+    }
+    const small = document.createElement("span");
+    small.className = "historyBestSub";
+    small.append(...sub);
+    cell.append(big, small);
+    cell.addEventListener("click", () => openBest(best));
+    return cell;
+  };
+
+  const shortDate = (ms) => {
+    try {
+      return new Date(Number(ms)).toLocaleDateString(window.i18n?.getLanguage?.() || undefined, { day: "numeric", month: "short" });
+    } catch {
+      return formatDate(ms).slice(0, 10);
+    }
+  };
+  const classIcon = (job) => {
+    if (!CLASS_ICON_JOBS.has(job)) return [];
+    const img = document.createElement("img");
+    img.src = `./assets/${job}.png`;
+    img.alt = getJobLabel(job);
+    img.className = "historyBestClass";
+    return [img];
+  };
+
+  const buildBestRow = (e) => {
+    const row = document.createElement("div");
+    row.className = "historyBestRow";
+    const name = document.createElement("div");
+    name.className = "historyBestName";
+    const title = document.createElement("div");
+    title.className = "historyRowName";
+    title.textContent = e.bossName || `#${e.mobCode}`;
+    const level = window.i18n?.getNpcLevel?.(Number(e.mobCode)) || "";
+    if (level) {
+      const badge = document.createElement("span");
+      badge.className = "difficultyBadge difficulty-level";
+      badge.textContent = level;
+      title.appendChild(badge);
+    }
+    const counts = document.createElement("div");
+    counts.className = "historyBestCounts";
+    const count = (n, one, many) => (n === 1
+      ? t(`history.${one}`, `1 ${one}`)
+      : window.i18n?.format?.(`history.${many}`, { n }, `${n} ${many}`));
+    const kills = e.counts.kills + e.counts.unconfirmed;
+    const parts = [count(kills, "killOne", "kills")];
+    if (e.counts.wipes) parts.push(count(e.counts.wipes, "wipeOne", "wipes"));
+    counts.textContent = parts.join(" · ");
+    name.append(title, counts);
+    const who = (b) => (character === "" && b?.who ? [` ${b.who}`] : []);
+    row.append(
+      name,
+      bestCell(e.fastest, e.fastest ? formatTime(e.fastest.value) : "", e.fastest ? [shortDate(e.fastest.atMs), ...who(e.fastest)] : []),
+      bestCell(e.myDps, e.myDps ? formatDamage(e.myDps.value) : "", e.myDps ? [...classIcon(e.myDps.job), ...who(e.myDps)] : []),
+      bestCell(e.partyDps, e.partyDps ? formatDamage(e.partyDps.value) : "", e.partyDps ? [shortDate(e.partyDps.atMs)] : []),
+    );
+    return row;
+  };
+
+  // A folded list under a button: "Other bosses (2)", "Other levels (5)".
+  const foldedRows = (rows, key, fallback) => {
+    const frag = document.createDocumentFragment();
+    if (!rows.length) return frag;
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "historyShowAll";
+    const box = document.createElement("div");
+    box.hidden = true;
+    rows.forEach((e) => box.appendChild(buildBestRow(e)));
+    const label = () => {
+      more.textContent = box.hidden
+        ? window.i18n?.format?.(key, { n: rows.length }, fallback.replace("{n}", rows.length))
+        : t("history.showFewer", "Show fewer");
+      more.setAttribute("aria-expanded", String(!box.hidden));
+    };
+    label();
+    more.addEventListener("click", () => {
+      box.hidden = !box.hidden;
+      label();
+    });
+    frag.append(more, box);
+    return frag;
+  };
+
+  // A boss's level (Nightmare), as a number, 0 where it has none.
+  const levelOf = (e) => Number(String(window.i18n?.getNpcLevel?.(Number(e.mobCode)) || "").replace(/\D+/g, "")) || 0;
+
+  // Dungeon sections opened on the bests tab (closed to start with).
+  const openBestSections = new Set();
+
+  // Personal bests by dungeon, the dungeons you cleared most recently first,
+  // each folded to a line saying its last boss's fastest kill. Inside, its
+  // last boss leads and the bosses before it fold under "Other bosses",
+  // except in a raid or on Hard, where every boss is listed. A boss with
+  // levels (Nightmare) leads with its highest; the rest fold under it.
+  const renderBests = () => {
+    const rows = bestRows();
+    if (!rows.length) {
+      if (emptyEl) {
+        emptyEl.textContent = t("history.noBests", "No dungeon kills yet.");
+        emptyEl.style.display = "";
+      }
+      return;
+    }
+    if (emptyEl) emptyEl.style.display = "none";
+    const head = document.createElement("div");
+    head.className = "historyBestRow historyBestHead";
+    for (const [key, fallback] of [["history.encounter", "Encounter"], ["history.fastestKill", "Fastest kill"],
+      ["history.yourBest", "Your best DPS"], ["history.partyBest", "Party best"]]) {
+      head.appendChild(Object.assign(document.createElement("span"), { textContent: t(key, fallback) }));
+    }
+    const dungeons = new Map();
+    for (const e of rows) {
+      const title = dungeonTitle(e.dungeonId, e.mobCode);
+      if (!dungeons.has(title)) dungeons.set(title, []);
+      dungeons.get(title).push(e);
+    }
+    const latest = (list) => Math.max(...list.flatMap((e) => [e.fastest?.atMs || 0, e.myDps?.atMs || 0]));
+    // Dungeon tier: raids, then the game's tiers from 6 down (Hard before
+    // Normal in each), then dungeons with none, Nightmare (a boss's levels,
+    // no dungeon of the table's) last; the most recent first in each.
+    const DIFFICULTY_ORDER = { hard: 0, normal: 1, exploration: 2 };
+    const rank = (list) => {
+      const e = list[0];
+      if (e.raid) return [0, 0, 0];
+      if (levelOf(e) && !window.i18n?.getDungeonName?.(Number(e.dungeonId))) return [3, 0, 0];
+      const tier = Math.max(...list.map((x) => Number(x.dungeonTier) || 0));
+      return tier ? [1, -tier, DIFFICULTY_ORDER[tierOf(e)?.key] ?? 3] : [2, 0, DIFFICULTY_ORDER[tierOf(e)?.key] ?? 3];
+    };
+    const byTier = ([, a], [, b]) => {
+      const ra = rank(a);
+      const rb = rank(b);
+      return ra[0] - rb[0] || ra[1] - rb[1] || ra[2] - rb[2] || latest(b) - latest(a);
+    };
+    const frag = document.createDocumentFragment();
+    frag.appendChild(head);
+    const ordered = [...dungeons].sort(bestsSort === "tier" ? byTier : ([, a], [, b]) => latest(b) - latest(a));
+    for (const [title, list] of ordered) {
+      // Bosses with levels: the highest of each leads, the others fold.
+      const byBoss = new Map();
+      for (const e of list) {
+        const key = levelOf(e) ? `name:${e.bossName}` : `mob:${e.mobCode}`;
+        if (!byBoss.has(key)) byBoss.set(key, []);
+        byBoss.get(key).push(e);
+      }
+      const tops = [];
+      const lowerLevels = [];
+      for (const group of byBoss.values()) {
+        group.sort((a, b) => levelOf(b) - levelOf(a));
+        tops.push(group[0]);
+        lowerLevels.push(...group.slice(1));
+      }
+      const allEqual = tops.some((e) => e.raid || tierOf(e)?.key === "hard");
+      const finals = allEqual ? [] : tops.filter((e) => e.finalBoss);
+      const lead = finals.length ? finals : tops;
+      const others = finals.length ? tops.filter((e) => !e.finalBoss) : [];
+
+      const section = document.createElement("div");
+      section.className = "historyGroup historyBestDungeon";
+      const header = document.createElement("button");
+      header.type = "button";
+      header.className = "historyGroupHeader";
+      const chevron = document.createElement("span");
+      chevron.className = "historyGroupChevron";
+      chevron.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>`;
+      const titleEl = document.createElement("span");
+      titleEl.className = "historyGroupTitle";
+      const nameEl = Object.assign(document.createElement("span"), { className: "historyGroupName", textContent: title });
+      // Folded, the section says what matters: its lead bosses' fastest kills.
+      const summaryEl = document.createElement("span");
+      summaryEl.className = "historyGroupSummary";
+      summaryEl.textContent = lead.slice(0, 3).map((e) => {
+        const level = levelOf(e) ? ` ${window.i18n?.getNpcLevel?.(Number(e.mobCode))}` : "";
+        return `${e.bossName}${level}${e.fastest ? ` ${formatTime(e.fastest.value)}${e.fastest.confirmed ? "" : "?"}` : ""}`;
+      }).join(" · ") + (lead.length > 3 ? " …" : "");
+      titleEl.append(nameEl, summaryEl);
+      const kills = list.reduce((n, e) => n + e.counts.kills + e.counts.unconfirmed, 0);
+      const countEl = Object.assign(document.createElement("span"), {
+        className: "historyGroupCount",
+        textContent: kills === 1 ? t("history.killOne", "1 kill") : window.i18n?.format?.("history.kills", { n: kills }, `${kills} kills`),
+      });
+      header.append(chevron, titleEl, countEl);
+
+      const body = document.createElement("div");
+      body.className = "historyGroupChildren";
+      const fill = () => {
+        if (body.childElementCount) return;
+        lead.forEach((e) => body.appendChild(buildBestRow(e)));
+        body.appendChild(foldedRows(others, "history.otherBosses", "Other bosses ({n})"));
+        body.appendChild(foldedRows(lowerLevels, "history.otherLevels", "Other levels ({n})"));
+      };
+      const setOpen = (open) => {
+        if (open) {
+          openBestSections.add(title);
+          fill();
+        } else {
+          openBestSections.delete(title);
+        }
+        header.classList.toggle("expanded", open);
+        header.setAttribute("aria-expanded", String(open));
+        body.style.display = open ? "" : "none";
+      };
+      setOpen(openBestSections.has(title));
+      header.addEventListener("click", () => setOpen(!openBestSections.has(title)));
+      section.append(header, body);
+      frag.appendChild(section);
+    }
+    listEl.appendChild(frag);
+  };
+
+  const syncTabs = () => {
+    tabBtns.forEach((b) => {
+      const on = b.dataset.tab === tab;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", String(on));
+    });
+    panel.classList.toggle("bestsTab", tab === "bests");
   };
 
   const renderList = (fights) => {
     if (!listEl) return;
     listEl.innerHTML = "";
     renderedCount = 0;
+    if (emptyEl) emptyEl.textContent = t("history.empty", "No boss fights recorded yet.");
+    if (tab === "bests") {
+      renderBests();
+      return;
+    }
 
     lastVisible = applyFilters(fights);
 
@@ -642,8 +1283,17 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
     } catch {
       allFights = [];
     }
+    syncTabs();
     populateDropdowns(allFights);
     renderList(allFights);
+    // Personal bests come a moment later (they keep the history's summaries
+    // up to date first); the fights don't wait for them.
+    Promise.resolve(window.javaBridge?.getPersonalBests?.()).then((list) => {
+      bests = Array.isArray(list) ? list : [];
+      bestIds = new Set(bests.flatMap((e) => [e.fastest, e.myDps, e.partyDps]).filter(Boolean).map((b) => b.fightId));
+      populateDropdowns(allFights);
+      renderList(allFights);
+    }).catch(() => {});
     // Links for fights already uploaded arrive a moment later; the buttons
     // work without them, so the list does not wait.
     Promise.resolve(window.javaBridge?.shareStatus?.()).then((status) => {
@@ -674,10 +1324,46 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
     }
   });
 
-  filterBossEl?.addEventListener("change", () => {
-    filterBoss = filterBossEl.value;
+  let searchTimer = 0;
+  searchEl?.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      search = searchEl.value;
+      renderList(allFights);
+    }, 150);
+  });
+  characterEl?.addEventListener("change", () => {
+    character = characterEl.value;
     renderList(allFights);
   });
+  difficultyEl?.addEventListener("change", () => {
+    difficulty = difficultyEl.value;
+    renderList(allFights);
+  });
+  periodEl?.addEventListener("change", () => {
+    periodDays = Number(periodEl.value) || 0;
+    renderList(allFights);
+  });
+  sortEl?.addEventListener("change", () => {
+    sortBy = sortEl.value;
+    renderList(allFights);
+  });
+  bestsSortEl?.addEventListener("change", () => {
+    bestsSort = bestsSortEl.value === "tier" ? "tier" : "recent";
+    try { localStorage.setItem(BESTS_SORT_KEY, bestsSort); } catch {}
+    renderList(allFights);
+  });
+  killsOnlyEl?.addEventListener("change", () => {
+    killsOnly = killsOnlyEl.checked;
+    renderList(allFights);
+  });
+  tabBtns.forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.tab === tab) return;
+    tab = b.dataset.tab === "bests" ? "bests" : "fights";
+    try { localStorage.setItem(TAB_KEY, tab); } catch {}
+    syncTabs();
+    renderList(allFights);
+  }));
   filterPlayerTrigger?.addEventListener("click", () => {
     setClassDropdownOpen(!classDropdownOpen);
   });
@@ -685,10 +1371,6 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
     if (classDropdownOpen && filterPlayerEl && !filterPlayerEl.contains(e.target)) {
       setClassDropdownOpen(false);
     }
-  });
-  filterDateEl?.addEventListener("change", () => {
-    filterDate = filterDateEl.value;
-    renderList(allFights);
   });
 
   trainToggleBtn?.addEventListener("click", () => {
@@ -719,14 +1401,12 @@ const createHistoryUI = ({ onOpenFight } = {}) => {
     panel.classList.remove("open");
     showDeleteMode = false;
     syncDeleteToggle();
-    filterBoss = "";
     filterPlayer = "";
-    filterDate = "";
+    search = "";
+    if (searchEl) searchEl.value = "";
     expandedGroups.clear();
-    if (filterBossEl) filterBossEl.selectedIndex = 0;
     if (filterPlayerLabel) filterPlayerLabel.textContent = t("history.filterPlayer", "All classes");
     setClassDropdownOpen(false);
-    if (filterDateEl) filterDateEl.selectedIndex = 0;
   };
 
   const isOpen = () => panel.classList.contains("open");

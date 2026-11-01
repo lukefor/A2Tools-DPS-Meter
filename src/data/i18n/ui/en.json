@@ -4,10 +4,43 @@
     "display": {
       "dps": "DPS",
       "total": "DMG",
+      "damageReceived": "TAKEN",
       "ariaDps": "Showing DPS",
       "ariaDamage": "Showing total damage",
-      "both": "BOTH",
-      "ariaBoth": "Showing DPS and total damage"
+      "ariaDamageReceived": "Showing damage taken",
+      "hps": "HPS",
+      "totalHeal": "HEAL",
+      "stagger": "STAG",
+      "ariaHps": "Showing raw healing per second (excludes passive regen)",
+      "ariaHeal": "Showing total raw healing (excludes passive regen)",
+      "ariaStagger": "Showing stagger dealt to the boss's gauge",
+      "names": {
+        "dps": "Damage per second",
+        "totalDamage": "Total damage",
+        "damageReceived": "Damage taken",
+        "hps": "Healing per second",
+        "totalHeal": "Total healing",
+        "stagger": "Stagger",
+        "bossStagger": "Boss stagger %",
+        "statColours": "Stat colours",
+        "deaths": "Death count"
+      },
+      "sortBy": "Sort by this",
+      "menuTip": "Pick what the rows show. Wheel or right-click: next metric",
+      "bossStaggerTip": "How far the boss's stagger gauge is worn down, on its HP bar",
+      "sortCol": "Sort",
+      "showCol": "Show",
+      "statColoursTip": "Each stat in its own colour on the rows, the menu and the button"
+    },
+    "updates": {
+      "meter": "A2Tools DPS Meter {version} is available",
+      "plugins": "Plugin updates: {list}"
+    },
+    "targetMode": {
+      "lastHitByMe": "The enemy you hit last",
+      "bossTargets": "Bosses only",
+      "trainTargets": "Training dummies",
+      "allTargets": "Every enemy, combined"
     }
   },
   "details": {
@@ -68,8 +101,18 @@
       "backTooltip": "Back Attack %",
       "frontal": "Front",
       "frontalTooltip": "Frontal %",
-      "powershard": "PS",
-      "powershardTooltip": "PowerShard %",
+      "shieldBlock": "Blk",
+      "shieldBlockTooltip": "Shield Block %",
+      "perfectBlock": "PBlk",
+      "perfectBlockTooltip": "Perfect Block %",
+      "ironWall": "Endr",
+      "ironWallTooltip": "Endurance %",
+      "regeneration": "Rgn",
+      "regenerationTooltip": "Regeneration %",
+      "miss": "Miss",
+      "missTooltip": "Misses",
+      "resist": "Res",
+      "resistTooltip": "Resists",
       "regen": "Reg",
       "regenTooltip": "Life-steal Regen",
       "multiHit": "MH%",
@@ -81,7 +124,18 @@
       "avgDmg": "Avg",
       "avgDmgTooltip": "Avg Damage",
       "maxDmg": "Max",
-      "maxDmgTooltip": "Max Damage"
+      "maxDmgTooltip": "Max Damage",
+      "heal": "Heal",
+      "healTooltip": "Healing",
+      "healPct": "H%",
+      "healPctTooltip": "Healing %"
+    },
+    "peak": {
+      "label": "Party list",
+      "show": "Show peak DPS (best 5 s) beside the average"
+    },
+    "party": {
+      "activeDps": "Active-time DPS: {dps} ({active} of the fight's {total})"
     },
     "stats": {
       "totalDamage": "Total Damage",
@@ -96,7 +150,17 @@
       "selfHealing": "Self-Healing",
       "multiHitDamage": "Multi-Hit Damage",
       "multiHitHits": "Multi-Hits",
-      "maxHp": "Max HP"
+      "maxHp": "Max HP",
+      "damageReceived": "Damage Taken",
+      "deaths": "Deaths",
+      "avgDps": "Avg DPS",
+      "peakDps": "Peak DPS",
+      "peakDpsTip": "The highest DPS over any 5 seconds of the fight",
+      "blockedTaken": "Blocked (Perfect)",
+      "blockedTakenTip": "Of the hits taken: blocked with a shield, and in brackets perfectly blocked",
+      "parriedTaken": "Parried (Perfect)",
+      "parriedTakenTip": "Of the hits taken: parried, and in brackets perfectly parried",
+      "parryRateTip": "Of your hits: the share the target parried"
     },
     "titleFor": "for",
     "titleVs": "vs",
@@ -105,9 +169,95 @@
     "history": {
       "allPlayers": "All Players"
     },
-    "dpsChart": "DPS Chart",
+    "dpsChart": "Damage per second",
     "historyBtn": "History",
-    "timeline": "Timeline"
+    "timeline": "Timeline",
+    "buffs": {
+      "title": "Buffs",
+      "castByLabel": "Cast by",
+      "casterAll": "All",
+      "casterParty": "Party",
+      "casterSelf": "Self",
+      "sortLabel": "Sort",
+      "sortUptime": "Uptime",
+      "sortFirst": "First applied",
+      "showPassives": "Passives",
+      "passives": "Passives",
+      "uptime": "Up",
+      "onTarget": "Debuffs on target",
+      "selectPlayer": "Select a player above to see their buffs.",
+      "noneShown": "None with these filters.",
+      "none": "No buffs or debuffs were seen in this fight.",
+      "older": "No buff data for this fight (recorded by an older version).",
+      "loading": "Loading...",
+      "unknownCaster": "Unknown",
+      "summonTag": "Summon",
+      "castBy": "Cast by {name}",
+      "stacks": "Stacks: {n}",
+      "ended": "Ended: {reason}",
+      "beforePull": "On before the fight began",
+      "end": {
+        "stacks": "Stacks changed",
+        "expired": "Expired",
+        "takenOff": "Taken off by a skill",
+        "removed": "Removed (reason unknown)",
+        "recast": "Applied again by another caster",
+        "gone": "Target died or left",
+        "mapLoad": "Map changed",
+        "notListed": "Ended unseen",
+        "pushedOut": "Pushed out by a newer stack",
+        "unseen": "Ran out (no end seen)",
+        "stillOn": "Still on at the end of the fight",
+        "replaced": "Replaced by a new level"
+      }
+    },
+    "stagger": {
+      "title": "Stagger",
+      "unknownActor": "Unknown",
+      "unknownSkill": "Unknown skill",
+      "older": "No stagger data for this fight (recorded by an older version).",
+      "loading": "Loading...",
+      "none": "No stagger gauge was worn down in this fight.",
+      "incomplete": "Its start was not seen: earlier stagger is missing.",
+      "ambiguous": "May belong to another player: someone else hit at the same time.",
+      "ambiguousCount": "{n} hit(s) may belong to another player.",
+      "value": "{n} stagger",
+      "ended": {
+        "break": "Broken after {secs} s",
+        "reset": "Missed: {missing} of {max} left",
+        "death": "Defeated before the break: {missing} of {max} left",
+        "despawn": "Left before the break: {missing} of {max} left",
+        "fightEnd": "Still open when the fight ended: {missing} of {max} left"
+      }
+    },
+    "fightTimeline": "Fight timeline",
+    "replay": {
+      "label": "Replay",
+      "title": "Replay",
+      "play": "Play replay",
+      "pause": "Pause",
+      "speed": "Playback speed",
+      "position": "Replay position",
+      "positionText": "{at} of {total}",
+      "exit": "End replay (show the whole fight)",
+      "wholeFightNote": "Damage Taken, Min / Max and buff uptimes show the whole fight.",
+      "moreSkills": "+{n} more, shown when paused",
+      "noHealTiming": "Healing in this fight has no times (an older version saved it): it shows the whole fight.",
+      "unavailable": "This fight was saved without hit times, so it cannot be replayed"
+    },
+    "casts": "Casts",
+    "resize": "Drag to resize",
+    "healTimingNote": "No heal timing for this fight (recorded by an older version).",
+    "chart": {
+      "bossHp": "Boss HP",
+      "ping": "Ping",
+      "death": "Death",
+      "died": "died at",
+      "downFor": "down for"
+    },
+    "hpsChart": "Healing per second",
+    "sectionChart": "Chart",
+    "showSections": "Show sections"
   },
   "history": {
     "title": "Battle History",
@@ -126,6 +276,13 @@
     "viewDungeon": "Group by dungeon",
     "viewGrouped": "Group by boss",
     "fightCount": "{n} fights",
+    "best": "Best {time}",
+    "top": "Top {damage}",
+    "showAll": "Show all {n}",
+    "showFewer": "Show fewer",
+    "expandAll": "Expand all",
+    "collapseAll": "Collapse all",
+    "training": "Training",
     "fightCountOne": "1 fight",
     "previewUpload": "Preview upload",
     "previewUploadTip": "Write what sharing this fight would upload. Nothing is sent.",
@@ -136,25 +293,61 @@
     "uploadWorking": "Uploading…",
     "uploadDonePublic": "Uploaded. Link copied: {url}",
     "uploadDonePrivate": "Uploaded as private. Link copied: {url}",
-    "openWorld": "Open world"
+    "openWorld": "Open world",
+    "tabFights": "Fights",
+    "tabBests": "Personal bests",
+    "search": "Boss or dungeon…",
+    "allCharacters": "All characters",
+    "allDifficulties": "All difficulties",
+    "periodAll": "All time",
+    "periodToday": "Last 24 hours",
+    "period7": "Last 7 days",
+    "period30": "Last 30 days",
+    "sort": "Sort",
+    "sortNewest": "Newest",
+    "sortFastest": "Fastest kill",
+    "sortPartyDps": "Party DPS",
+    "sortMyDps": "Your DPS",
+    "sortRecent": "Most recent",
+    "sortTier": "Dungeon tier",
+    "killsOnly": "Kills only",
+    "wipe": "Wipe",
+    "pb": "PB",
+    "pbTip": "One of your personal bests",
+    "party": "Party",
+    "you": "You",
+    "totalDamage": "Total damage",
+    "finalBoss": "Final boss",
+    "fightGone": "That fight is no longer saved; its best is kept.",
+    "unconfirmedTip": "The kill wasn't recorded (a fight from before 2.0.87): judged from the damage dealt.",
+    "openBest": "Open this fight",
+    "killOne": "1 kill",
+    "wipeOne": "1 wipe",
+    "kills": "{n} kills",
+    "wipes": "{n} wipes",
+    "otherBosses": "Other bosses ({n})",
+    "otherLevels": "Other levels ({n})",
+    "noBests": "No dungeon kills yet.",
+    "encounter": "Encounter",
+    "fastestKill": "Fastest kill",
+    "yourBest": "Your best DPS",
+    "partyBest": "Party best"
   },
   "settings": {
     "title": "Settings",
-    "lockedPort": "Detected device/port",
-    "resetDetection": "Reset",
-    "characterName": "Name#ID",
+    "lockedPort": "Detected connection",
+    "resetDetection": "Detect again",
+    "characterName": "Your character",
     "characterNamePlaceholder": "Enter your character name",
-    "pinMeToTop": "Always show me at the top",
+    "pinMeToTop": "Keep my row at the top",
     "slimMode": "Slim mode",
     "meterLayout": {
       "label": "Meter layout",
-      "beta": "Beta UI",
-      "betaSlim": "Beta Slim",
-      "classic": "Classic UI",
-      "classicSlim": "Classic Slim"
+      "standard": "Standard",
+      "slim": "Slim"
     },
     "detailsMonitor": {
-      "label": "Show Details on monitor",
+      "label": "Details on second monitor",
       "off": "Off",
       "primary": "primary",
       "missing": "That display is not connected.",
@@ -171,7 +364,7 @@
     "connection": "Connection",
     "diagnostics": "Diagnostics",
     "device": {
-      "label": "Capture device",
+      "label": "Network adapter",
       "autoDetect": "Auto-detect"
     },
     "router": {
@@ -180,34 +373,88 @@
     },
     "advanced": "Advanced",
     "bossLogs": "Enable per-boss logs",
-    "saveRawPackets": "Enable packet logging",
+    "saveRawPackets": "Packet logging",
     "resetAllSettings": "Reset all settings",
     "bold": {
-      "label": "Bold",
+      "label": "Bold text",
       "names": "Names",
       "dps": "DPS"
     },
     "showPing": "Show ping",
-    "showTotalDps": "Show total DPS/DMG",
-    "roundDps": "Round DPS",
-    "autoHideMeter": "Auto-hide meter",
-    "showSuspendBtn": "Show suspend button",
-    "showLockBtn": "Show lock button (click-through)",
+    "showOdyle": "Show Odyle energy",
+    "odyleEnergy": "Odyle Energy",
+    "showTtk": "Show time to kill estimate",
+    "showTotalDps": "Show party total",
+    "roundDps": "Shorten DPS to thousands (13k)",
+    "showDpsSuffix": "Add /s to DPS",
+    "autoHideMeter": "Hide when AION2 isn't focused",
+    "hideWhenGameClosed": "Hide while AION2 is closed",
+    "hideWhenSolo": "Show only in a party",
+    "hideOutOfCombat": {
+      "label": "Hide out of combat",
+      "off": "Off",
+      "seconds": "After {seconds} s"
+    },
+    "showSuspendBtn": "Show pause capture button",
+    "showLockBtn": "Show click-through lock button",
     "playerLimit": {
       "label": "Max players shown"
     },
-    "debugLogging": "Enable debug logging",
+    "meterAnchor": {
+      "label": "Meter stays fixed at",
+      "options": {
+        "top": "Top",
+        "middle": "Centre",
+        "bottom": "Bottom"
+      }
+    },
+    "partyPresence": "Show A2Tools users in my party",
+    "debugLogging": "Debug logging",
     "quit": "Quit",
     "discord": {
       "title": "Discord",
       "activity": "Show what I'm playing in Discord",
-      "activityHint": "While AION2 is open, your Discord status shows your character's name, class, level and server, and the boss you are fighting. It goes through the Discord app on this computer; no account is needed."
+      "activityHint": "While AION2 is open, your Discord status shows your character's name, class, level and server, and the boss you are fighting. It goes through the Discord app on this computer; no account is needed. With Number in Discord set, it also shows your combat power or gear score.",
+      "stat": "Number in Discord",
+      "statHint": "The number your Discord status shows after your level."
+    },
+    "streamOverlay": {
+      "title": "Streaming",
+      "enable": "Stream overlay (OBS on another PC)",
+      "enableHint": "Serves the meter on your home network so OBS on a second PC can show it as a Browser Source.",
+      "port": "Port",
+      "url": "Browser Source URL",
+      "copy": "Copy",
+      "copied": "Copied",
+      "newKey": "New key",
+      "help": "In OBS on the other PC, add a Browser Source with this URL. The first time, Windows Firewall asks about the meter: allow it on private networks. Anyone on your network with the link can see the meter; New key cuts off old links.",
+      "noAddress": "No network address found. Is this PC connected to your network?",
+      "portInvalid": "Enter a port between 1024 and 65535.",
+      "error": "The overlay could not start: {error}",
+      "waiting": "Waiting for combat…",
+      "reconnecting": "Reconnecting to the meter…",
+      "player": "Player",
+      "displayName": "Your name on stream",
+      "displayNamePlaceholder": "Your character name"
     },
     "version": "Version",
+    "update": {
+      "check": "Check for updates",
+      "checking": "Checking…",
+      "current": "Up to date",
+      "installing": "Updating…",
+      "available": "{version} is out",
+      "failed": "Couldn't check. Try again later."
+    },
     "theme": {
-      "label": "Theme",
+      "label": "Colour theme",
       "options": {
         "aion2": "AION2",
+        "aion2Classes": "AION2 (class colours)",
+        "aion2ClassesVivid": "AION2 (class colours, vivid)",
+        "aion2Spectrum": "Spectrum",
+        "aion2Aurora": "Aurora",
+        "aion2Sunset": "Sunset",
         "asmodian": "Asmodian",
         "cogni": "Cogni",
         "elyos": "Elyos",
@@ -219,27 +466,85 @@
         "varian": "Varian"
       }
     },
+    "settingsTheme": {
+      "label": "Settings colours",
+      "tip": "The colours of this Settings window. The meter keeps its own theme.",
+      "options": {
+        "meter": "Meter theme",
+        "midnight": "Midnight",
+        "graphite": "Graphite",
+        "violet": "Violet",
+        "forest": "Forest",
+        "crimson": "Crimson",
+        "ocean": "Ocean",
+        "sapphire": "Sapphire",
+        "indigo": "Indigo",
+        "rose": "Rose",
+        "sunset": "Sunset",
+        "amber": "Amber",
+        "copper": "Copper",
+        "lime": "Lime",
+        "ice": "Ice",
+        "slate": "Slate",
+        "onyx": "Onyx"
+      }
+    },
+    "font": {
+      "label": "Font",
+      "tip": "The font of the meter, Settings, Battle History and Details.",
+      "options": {
+        "meter": "Meter font",
+        "system": "System font",
+        "inter": "Inter",
+        "exo2": "Exo 2",
+        "oxanium": "Oxanium",
+        "jetbrains": "JetBrains Mono (even-width numbers)",
+        "atkinson": "Atkinson Hyperlegible (clear letters and numbers)",
+        "lexend": "Lexend (easier reading)",
+        "andika": "Andika (for dyslexia)"
+      }
+    },
+    "textureOffset": "Offset textures",
+    "barTexture": {
+      "label": "Bar texture",
+      "supportersOnly": "For supporters: sign in above, under A2 Tools account, to use it.",
+      "options": {
+        "none": "None",
+        "flames": "Flames",
+        "crystal": "Frost crystal",
+        "glacier": "Glacier",
+        "feathers": "Feathers",
+        "wing": "Wing",
+        "storm": "Storm",
+        "nebula": "Nebula",
+        "galaxy": "Galaxy",
+        "aura": "Aura"
+      }
+    },
+    "appearanceGroups": {
+      "general": "General",
+      "colours": "Colours",
+      "layout": "Layout",
+      "opacity": "Opacity"
+    },
     "language": {
       "label": "Language"
     },
     "windowOpacity": {
-      "label": "Main window opacity"
+      "label": "Background opacity"
+    },
+    "titleOpacity": {
+      "label": "Title bar opacity"
     },
     "meterOpacity": {
-      "label": "Meter bar opacity"
+      "label": "Bar opacity"
+    },
+    "barPreview": "Preview",
+    "meterSaturation": {
+      "label": "Bar colour strength"
     },
     "bossNameSize": {
-      "label": "Target name size"
-    },
-    "targetWindow": {
-      "label": "Target time range",
-      "options": {
-        "5s": "5 seconds",
-        "10s": "10 seconds",
-        "15s": "15 seconds",
-        "20s": "20 seconds",
-        "30s": "30 seconds"
-      }
+      "label": "Title size"
     },
     "targetSelection": {
       "label": "Target selection (experimental)",
@@ -250,8 +555,17 @@
         "allTargets": "All targets combined"
       }
     },
+    "updateRate": {
+      "label": "Meter update rate",
+      "options": {
+        "100": "0.1 s",
+        "200": "0.2 s (default)",
+        "250": "0.25 s",
+        "500": "0.5 s"
+      }
+    },
     "allTargetsWindow": {
-      "label": "All Targets time range",
+      "label": "All Targets time window",
       "options": {
         "30s": "30 seconds",
         "1m": "1 minute",
@@ -266,14 +580,28 @@
       "reload": "Reload data",
       "toggle": "Show/Hide window",
       "pressKeys": "Press keys...",
-      "needModifiers": "Need 2+ modifiers",
-      "lock": "Lock/unlock overlay"
+      "tooManyKeys": "Up to 3 keys",
+      "plugins": "Bring back plugin windows",
+      "notSet": "Not set",
+      "restoreDefaults": "Restore defaults",
+      "hint": "Click a keybind, then press 1 to 3 keys. Esc cancels.",
+      "lock": "Lock/unlock overlay",
+      "openDesktop": "Desktop shortcuts"
     },
     "defaultMeterMode": {
-      "label": "Default mode"
+      "label": "Starting target mode"
+    },
+    "partyStat": {
+      "label": "Beside player names",
+      "options": {
+        "combatPower": "Combat power",
+        "gearScore": "Gear score",
+        "both": "Both",
+        "off": "Off"
+      }
     },
     "trainingMode": {
-      "label": "Training Mode target",
+      "label": "Details in Train mode",
       "options": {
         "all": "All",
         "highestDamage": "Highest Damage"
@@ -294,20 +622,160 @@
       "failed": "Sign-in failed: {error}",
       "supporter": "Supporter",
       "autoUpload": "Upload boss fights automatically",
-      "autoUploadHint": "When a boss fight ends it is uploaded to your account, with the visibility you chose on a2tools.app. Other players stay masked. Training dummies are never uploaded."
+      "autoUploadHint": "When a boss fight ends it is uploaded to your account, with the visibility you chose on a2tools.app. Other players stay masked. Training dummies are never uploaded.",
+      "guestUpload": "Upload boss fights without an account",
+      "guestUploadHint": "When a boss fight ends it is uploaded to a2tools.app, public, without an account. Other players stay masked. Sign in later and the fights uploaded from this PC become yours.",
+      "guestClaimHint": "Fights uploaded from this PC are kept for you. Sign in here to make them yours, or get a code to claim them from another device.",
+      "guestClaimButton": "Get a claim code",
+      "guestClaimCode": "Enter {code} at {url} while signed in. The code expires in 15 minutes.",
+      "claimed": "{count} fights uploaded from this PC are now yours."
     },
     "sendLogs": {
-      "hint": "Sends your 3 newest packet logs to the developer, for a bug report.",
-      "button": "Send logs to dev",
-      "confirm": "Send your 3 newest packet logs to the A2 Tools developer?\n\nPacket logs are raw game traffic recorded while packet logging was on, including character names. Only the developer can open them, and they are deleted after 30 days.",
+      "hint": "Sends your debug log and your most recent packet logs (3 files in all) to the developer, for a bug report.",
+      "button": "Send Logs to Dev",
+      "confirm": "Send your debug log and your most recent packet logs to the A2 Tools developer?\n\nThe debug log records what the meter did. Packet logs are raw game traffic recorded while packet logging was on. Both can include character names. Only the developer can open them, and they are deleted after 30 days.",
       "sending": "Sending...",
       "sent": "Sent. Your report code is {code}: give it to the developer on Discord.",
-      "failed": "Could not send: {error}"
-    }
+      "failed": "Could not send: {error}",
+      "files": "These files will be sent:",
+      "contents": "Packet logs can include chat and other players' names."
+    },
+    "barGap": {
+      "label": "Bar spacing"
+    },
+    "debugLoggingLocked": "On while packet logging is on: packet logs need the debug log to be read.",
+    "tips": {
+      "showOdyle": "Below the meter, your Odyle energy as the game shows it: basic (+charged). It updates at login, after a server transfer and when the energy changes. Until then, for example after restarting the meter, the last value seen shows dimmed.",
+      "characterName": "Your in-game name and ID, so the meter knows which row is you. It is usually found on its own.",
+      "device": "The network connection the meter reads game traffic from. Auto-detect finds it; pick one by hand if you use a VPN.",
+      "lockedPort": "The adapter and port the game was found on.",
+      "defaultMeterMode": "The target mode the meter opens in: Boss, Target, Train or All.",
+      "playerLimit": "How many player rows the meter shows; the rest are left out.",
+      "meterAnchor": "The edge of the meter that stays put as rows come and go.",
+      "pinMeToTop": "Your row stays first, whatever your damage.",
+      "autoHideMeter": "The meter disappears while another window is in front of the game, and comes back with it.",
+      "detailsMonitor": "Opens the Details window on the chosen display and keeps it there.",
+      "showTtk": "Beside the battle timer, an estimate of how long the whole boss fight will take.",
+      "showTotalDps": "A bar under the rows with the party's combined DPS and damage.",
+      "roundDps": "13,412 shows as 13k.",
+      "showSuspendBtn": "A button on the meter that stops reading game traffic until you press it again.",
+      "showLockBtn": "A button that makes the meter ignore the mouse, so clicks go through to the game.",
+      "windowOpacity": "How see-through the meter's background is. Bars and text stay as they are.",
+      "titleOpacity": "How see-through the meter's title bar is, apart from the background under it. Until you move it, it follows the background.",
+      "meterOpacity": "How solid the coloured damage bars are.",
+      "meterSaturation": "How strong the bars' colours are: lower for softer, higher for more vivid.",
+      "bossNameSize": "Size of the boss or target name above the bars.",
+      "partyStat": "The number beside each player's name, in the meter and in Details. Only your own party's members have one.",
+      "barTexture": "A pattern over the meter's bars. A thank-you for supporting A2 Tools.",
+      "textureOffset": "Each bar starts its texture at a different place, so the bars don't all look alike.",
+      "trainingMode": "In Train mode, which dummies the Details window shows: all of them together, or only the one you hit hardest.",
+      "allTargetsWindow": "In All Targets mode, the meter adds up every target hit within this time of the latest hit.",
+      "updateRate": "How often the meter's numbers refresh. Faster shows hits sooner but uses more CPU.",
+      "partyPresence": "Party members who also use A2Tools see a small A2 tag beside your name, and you see theirs. Anyone in your party using A2Tools can see it, so they'll know you use a third-party meter. Only hashes of character names and servers are sent.",
+      "debugLogging": "Writes a diagnostic log the developer can use to track down problems.",
+      "saveRawPackets": "Records raw game traffic for bug reports. Debug logging turns on with it.",
+      "globalHotkeys": "The keys below work anywhere, even while the game is in front. Off, they are released for other programs. On Linux your desktop registers them and may ask you to approve them.",
+      "pluginDevMode": "Loads plugins from folders on this computer, for building and testing them. They are not reviewed, so only load plugins you trust.",
+      "showMeter": "Off: only your plugins show. The meter keeps reading combat and uploading in the background. Bring it back here, with the show/hide hotkey, or with the meter button on a plugin window.",
+      "clearOnZone": "When the last fight leaves the meter after the zone changes. Every fight stays in History either way.",
+      "hideWhenGameClosed": "The meter hides while the game isn't running, and comes back when it starts.",
+      "hideWhenSolo": "The meter hides while you're not in a party, and comes back when you join one. The Show/Hide keybind still brings it up.",
+      "hideOutOfCombat": "The meter hides once you've been out of combat this long, and comes back with the next hit. It stays up while Settings, History or Details is open, or the mouse is over it.",
+      "runAsAdmin": "Needed to show the game's frame rate. Windows asks each time the meter starts.",
+      "shareData": "Shares your server's field boss timers and Supply Requests with a2tools.app, to help keep A2Tools in sync for everyone: the bosses on your map, the ones you see killed and their HP, and the request boards after each reset. Nothing about your character is sent.",
+      "pluginAutoUpdate": "When the meter starts, plugin updates install by themselves, in the background. An update that asks for something new still waits for your yes."
+    },
+    "globalHotkeys": "Use keybinds",
+    "hotkeyConsent": {
+      "title": "Turn on keybinds?",
+      "desktop": "On Linux, your desktop sets up keybinds for the meter, and it may ask you to approve them.",
+      "anytime": "You can turn keybinds off at any time.",
+      "confirm": "Turn on",
+      "cancel": "Not now"
+    },
+    "keybindTaken": "Another program already uses these keys. Pick different keys.",
+    "keybindShared": "Another action uses these keys. Pick different keys.",
+    "keybindUnset": "Your desktop hasn't given this a key yet. Set it in Desktop shortcuts.",
+    "keybindAssigned": "Your desktop uses {key}. Change it in Desktop shortcuts.",
+    "plugins": {
+      "title": "Plugins",
+      "devMode": "Plugin developer mode",
+      "hint": "Plugins loaded here are not reviewed. Only load plugins you trust.",
+      "add": "Load plugin folder…",
+      "open": "Open",
+      "remove": "Remove",
+      "checkUpdates": "Check for updates",
+      "checking": "Checking…",
+      "upToDate": "Every plugin is up to date.",
+      "updated": "Updated: {list}",
+      "updatedFrom": "Updated from {version}",
+      "added": "Newly loaded",
+      "intro": "Reviewed plugins add features beside the meter. Each one gets only what it asks for when you install it.",
+      "installed": "Installed",
+      "none": "No plugins installed yet.",
+      "available": "Available",
+      "catalogLoading": "Loading the plugin list…",
+      "catalogEmpty": "Every reviewed plugin is installed.",
+      "catalogError": "Couldn't load the plugin list: {error}",
+      "offline": "The offline build does not download plugins.",
+      "install": "Install",
+      "update": "Update",
+      "updateTo": "Update to {version}",
+      "downloading": "Downloading…",
+      "installing": "Installing…",
+      "installDone": "{name} {version} is installed.",
+      "updatesAvailable": "Updates available: {list}",
+      "unreviewed": "Dev",
+      "by": "by {author}",
+      "consentTitle": "Install {name}?",
+      "consentUpdateTitle": "Update {name}?",
+      "consentIntro": "It will be able to:",
+      "consentNew": "The new version also asks to:",
+      "consentNetwork": "Like any web page, a plugin may be able to reach the internet.",
+      "consentCancel": "Cancel",
+      "permStorage": "Save its own data on this computer",
+      "permNotify": "Show short messages in its window",
+      "permWindow": "Show and hide its own window, without taking focus from the game",
+      "permWidgets": "Show small windows of its own, which you can move anywhere and lock in place",
+      "permBossTimers": "Read the field boss timers players share through a2tools.app",
+      "permCharacter": "See your character's name, server, class and level",
+      "permDecoder": "Read selected game fields (may include other players): {name}",
+      "permNone": "Nothing beyond showing its window",
+      "enabled": "Enabled",
+      "enabledTip": "On: starts with the meter. Off: stays installed but doesn't run.",
+      "showMeter": "Show the meter",
+      "hideClosed": "Hide while AION2 is closed",
+      "hideUnfocused": "Hide when AION2 isn't focused",
+      "inDock": "In the plugin dock (off: its own window)",
+      "search": "Search",
+      "noMatch": "No plugins match.",
+      "permsTitle": "It can:",
+      "permFps": "Show the game's frame rate (on Windows, the meter asks to run as administrator for it)",
+      "permDeathRecap": "After a player kills you: who they were and the damage they did to you",
+      "permScreenshot": "Take screenshots of its own window, to the clipboard and your screenshot folder",
+      "testHint": "Early versions for anyone to try, signed like the others. They may change or have rough edges: tell us what you find.",
+      "testTitle": "Test plugins",
+      "autoUpdate": "Update plugins automatically",
+      "whatsNew": "What's new in {version}"
+    },
+    "clearOnZone": {
+      "label": "Clear the meter",
+      "options": {
+        "instance": "Entering or leaving a dungeon",
+        "any": "Any zone change",
+        "never": "Never (keep the last fight)"
+      }
+    },
+    "runAsAdmin": "Run as administrator",
+    "runAsAdminTitle": "A2Tools - Run as administrator",
+    "runAsAdminAsk": "Showing the game's frame rate needs the meter to run as administrator.\n\nRestart the meter as administrator now? Windows will ask each time the meter starts. You can turn this off in Settings.",
+    "shareData": "Sync useful data to A2Tools"
   },
   "support": {
     "button": "Support Me",
     "title": "Support the author on Ko-fi",
+    "linksHint": "Ko-fi, Patreon, Afdian and PayPal open their site in your browser. The crypto buttons copy an address.",
+    "perks": "Every $5 gives you 12 months of supporter perks, up to 2 years per payment. Use the code from your A2 Tools account page in your Ko-fi message, or the same email on Patreon.",
     "titleWechat": "Support the author on WeChat",
     "label": {
       "wechat": "WeChat"
@@ -320,24 +788,34 @@
     "aria": {
       "afdian": "Open Afdian",
       "kofi": "Open Ko-fi",
+      "patreon": "Open Patreon",
       "close": "Close support modal",
       "wechat": "Show WeChat QR code",
       "paypal": "Open PayPal",
       "btc": "Copy BTC address",
       "eth": "Copy ETH address",
       "usdc": "Copy USDC address"
-    }
+    },
+    "sponsorLabel": "Sponsored",
+    "sponsorShort": "Reduce your ping with ExitLag",
+    "sponsorCode": "Use code",
+    "sponsorDisclosure": "Affiliate link. A2 Tools earns a commission if you subscribe, which helps keep these tools free.",
+    "more": "More ways to donate on a2tools.app"
   },
   "battleTime": {
-    "analysing": "Monitoring data...",
+    "analysing": "Monitoring",
+    "ttkTooltip": "Estimated length of the whole boss fight, from its remaining HP and the party's damage",
     "idle": "Idle",
-    "notRunning": "AION2 not running",
-    "suspended": "App suspended",
-    "waitingBoss": "Waiting for a boss"
+    "notRunning": "AION2 closed",
+    "suspended": "Suspended",
+    "waitingBoss": "No boss yet"
   },
   "meter": {
     "identifyingPlayer": "#{id}",
-    "dpsSuffix": "/s"
+    "a2toolsUser": "Uses A2Tools",
+    "dpsSuffix": "/s",
+    "others": "Others",
+    "deaths": "Died {count} times in this fight"
   },
   "skills": {
     "fallback": "Skill {code}",
@@ -355,7 +833,7 @@
   },
   "connection": {
     "auto": "Auto",
-    "detecting": "Detecting AION2 connection...",
+    "detecting": "Connecting...",
     "loopback": "Local Loopback"
   },
   "target": {
@@ -385,6 +863,8 @@
   },
   "presence": {
     "level": "Lv {level}",
+    "combatPower": "CP {cp}",
+    "gearScore": "GS {gs}",
     "fighting": "Fighting {boss}",
     "inGame": "In game",
     "elyos": "Elyos",
@@ -394,6 +874,11 @@
     "tierExpedition": "Expedition",
     "tierConquestNormal": "Conquest (Normal)",
     "tierConquestHard": "Conquest (Hard)"
+  },
+  "partyPromo": {
+    "title": "New: see A2Tools users in your party",
+    "text": "Party members who also use A2Tools get a small A2 tag beside their name, and you get one beside yours on their meter.",
+    "hint": "Anyone in your party who uses A2Tools will be able to see that you use a third-party meter. Only hashes of character names and servers are sent. You can change this any time in Settings."
   },
   "discordPromo": {
     "title": "New: Discord activity",
@@ -408,6 +893,88 @@
     "hint": "Other players' names stay masked, and training dummies are never uploaded. You can change this any time in Settings.",
     "signIn": "Sign in",
     "later": "Not now",
-    "close": "Close"
+    "close": "Close",
+    "guest": "No account",
+    "guestHint": "No account? Fights still upload, and become yours when you sign in."
+  },
+  "npcapPrompt": {
+    "ask": "A2Tools DPS Meter needs Npcap to read the game's network traffic, and Npcap is missing or not working.\n\nInstall it now? The meter downloads Npcap's installer from npcap.com and opens it. Once Npcap is installed, the meter starts capturing by itself.\n\nChoose No to install it yourself from https://npcap.com/#download",
+    "downloadFailed": "Npcap's installer could not be downloaded ({error}).\n\nInstall it yourself from https://npcap.com/#download, then open the meter again.",
+    "stillMissing": "Npcap is still not working. If its installer was closed before it finished, install Npcap from https://npcap.com/#download, then open the meter again."
+  },
+  "pluginUpdatePrompt": {
+    "title": "A2Tools - Plugin Update",
+    "one": "A plugin update is available:",
+    "many": "Plugin updates are available:",
+    "alsoAsks": "The new version also asks to:",
+    "updateNow": "Update now?",
+    "failed": "Couldn't update:"
+  },
+  "pluginDock": {
+    "tabs": "Show the plugins as tabs",
+    "stack": "Stack the plugins",
+    "fold": "Fold the dock",
+    "unfold": "Unfold the dock",
+    "hideControls": "Hide the controls",
+    "showControls": "Show the controls",
+    "popOut": "Open in its own window",
+    "pluginSettings": "Plugin settings",
+    "hide": "Hide (the plugin keeps running)",
+    "close": "Hide the dock (the plugins keep running)",
+    "hideMeter": "Hide the DPS meter",
+    "showMeter": "Show the DPS meter",
+    "settings": "Meter settings",
+    "opacity": "Background opacity",
+    "failed": "This plugin could not start: {error}"
+  },
+  "sharing": {
+    "title": "Help build the leaderboards?",
+    "sub": "Pick one to start. You can change it any time in Settings → Privacy.",
+    "shareTitle": "Share fights anonymously",
+    "recommended": "Recommended",
+    "shareText": "Your boss fights join a2tools.app's public logs with every name hidden. No account needed.",
+    "noTitle": "Don't share",
+    "noText": "Nothing about your fights leaves this PC.",
+    "signInBefore": "Want your fights under your name?",
+    "signIn": "Sign in with A2 Tools",
+    "signInAfter": "Fights shared before then move to your account.",
+    "previewTitle": "How a shared fight appears on a2tools.app",
+    "never": "Your PC's name and your character's full name are never sent.",
+    "policy": "Privacy policy",
+    "continue": "Continue"
+  },
+  "sharingNotice": {
+    "title": "Your fights help build the leaderboards",
+    "text": "Boss fights you finish are shared with a2tools.app with every name hidden, yours too (e.g. Na***a). No account needed, and you can stop any time in Settings → Privacy.",
+    "stop": "Stop sharing",
+    "details": "Details",
+    "keep": "Keep sharing",
+    "stopped": "Sharing stopped. The fights you shared before are being removed from a2tools.app."
+  },
+  "privacy": {
+    "title": "Privacy",
+    "intro": "What this meter shares with a2tools.app. Each one is your choice.",
+    "share": "Share boss fights anonymously",
+    "shareHint": "When a boss fight ends it joins a2tools.app's public logs and leaderboards. Every name is hidden, yours too. No account needed.",
+    "signedIn": "Signed in: your boss fights upload to your A2 Tools account (see A2 Tools Account).",
+    "never": "Never sent: chat, your PC's name, your character's full name. Send Logs to Dev (Advanced) sends logs only when you press it.",
+    "policy": "Full privacy policy"
+  },
+  "changelog": {
+    "title": "What's new",
+    "intro": "The latest releases, newest first.",
+    "allReleases": "All releases on GitHub",
+    "installed": "Installed",
+    "available": "Update available",
+    "loading": "Loading the release notes…",
+    "none": "No release notes yet.",
+    "failed": "Couldn't load the release notes. They are also on GitHub, below."
+  },
+  "footerMenu": {
+    "tip": "Choose what the footer shows",
+    "ttk": "Time to kill estimate",
+    "partyTotal": "Party total",
+    "odyle": "Odyle energy",
+    "ping": "Ping"
   }
 }

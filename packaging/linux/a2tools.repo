@@ -2,12 +2,15 @@
 # Silverblue, Kinoite, Aurora, Bluefin). Served at
 # https://cdn.a2tools.app/linux/a2tools.repo; install it with
 #   sudo curl -Lo /etc/yum.repos.d/a2tools.repo https://cdn.a2tools.app/linux/a2tools.repo
-# The packages are not signed yet, hence gpgcheck=0; they come over HTTPS
-# from the same CDN as the Windows installer.
+# The packages and the repository's index are signed (since 2.0.87) with the
+# key at https://cdn.a2tools.app/linux/a2tools.asc (packaging/linux/a2tools.asc,
+# fingerprint C955 98B7 90B4 DBE0 3F42  A314 50A5 2827 76C1 84DA); dnf asks
+# to trust it on the first install.
 [a2tools]
 name=A2Tools DPS Meter
 baseurl=https://cdn.a2tools.app/linux/rpm/
 enabled=1
-gpgcheck=0
-repo_gpgcheck=0
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://cdn.a2tools.app/linux/a2tools.asc
 metadata_expire=6h

@@ -15,6 +15,7 @@ use std::collections::VecDeque;
 
 use parking_lot::Mutex;
 
+use crate::capture::captured_payload::CapturedPayload;
 use crate::capture::evidence_slice::{CapturedPacket, LEAD_IN_MS, PRELUDE_MS, TAIL_MS};
 
 /// Long enough for the slice's prelude plus a long fight. Older than this and
@@ -32,18 +33,24 @@ struct Ring {
 static RING: Mutex<Ring> = Mutex::new(Ring { packets: VecDeque::new(), bytes: 0 });
 
 /// Remember one captured segment. Called for exactly the segments the packet
-/// logger would have been given, with the clock the parser stamps hits with.
-pub fn record(src_port: u16, data: &[u8]) {
-    let now = crate::clock::now_ms();
+/// logger would have been given, and stamped the same way: with the packet's
+/// capture time, as the time of dispatch falls on libpcap's 100 ms read grid.
+pub fn record(cap: &CapturedPayload) {
+    let at = cap.capture_time_ms().unwrap_or_else(crate::clock::now_ms);
+    record_at(at, crate::capture::captured_payload::stream_key(cap.src_port, cap.dst_port), &cap.data);
+}
+
+/// Remember one segment of `stream`, captured at `at`.
+pub fn record_at(at: i64, stream: String, data: &[u8]) {
     let mut ring = RING.lock();
     ring.bytes += data.len();
     ring.packets.push_back(CapturedPacket {
-        captured_at_ms: now,
-        stream: format!("Client:{src_port}"),
+        captured_at_ms: at,
+        stream,
         bytes: data.to_vec(),
     });
     while let Some(front) = ring.packets.front() {
-        if front.captured_at_ms >= now - KEEP_MS && ring.bytes <= MAX_BYTES {
+        if front.captured_at_ms >= at - KEEP_MS && ring.bytes <= MAX_BYTES {
             break;
         }
         let gone = ring.packets.pop_front().map(|p| p.bytes.len()).unwrap_or(0);
@@ -67,18 +74,50 @@ pub fn clear() {
 mod tests {
     use super::*;
 
+    /// The ring is one for the process; tests that fill it take turns.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn segment(captured_at_ms: i64, data: &[u8]) -> CapturedPayload {
+        CapturedPayload {
+            src_port: 7777,
+            dst_port: 50000,
+            data: data.to_vec(),
+            device_name: None,
+            captured_at_ms,
+            src_ip: None,
+            dst_ip: None,
+            tcp_seq: 0,
+            tcp_ack: 0,
+        }
+    }
+
     #[test]
     fn keeps_recent_segments_and_forgets_old_ones() {
+        let _turn = SERIAL.lock();
         clear();
-        crate::clock::set_override(Some(1_000_000));
-        record(7777, &[1, 2, 3]);
-        crate::clock::set_override(Some(1_000_000 + KEEP_MS + 1));
-        record(7777, &[4, 5]);
+        let at = 1_791_237_434_407;
+        record(&segment(at, &[1, 2, 3]));
+        record(&segment(at + KEEP_MS + 1, &[4, 5]));
         let held = snapshot();
-        crate::clock::set_override(None);
         assert_eq!(held.len(), 1);
         assert_eq!(held[0].bytes, vec![4, 5]);
-        assert_eq!(held[0].stream, "Client:7777");
+        assert_eq!(held[0].stream, "Client:50000:7777");
+        clear();
+    }
+
+    #[test]
+    fn a_segment_is_stamped_with_its_capture_time() {
+        let _turn = SERIAL.lock();
+        clear();
+        // Dispatched on the next 100 ms read, so the clock reads later.
+        crate::clock::set_override(Some(1_791_237_434_500));
+        record(&segment(1_791_237_434_407, &[1]));
+        // A segment with no capture time (a test, a replay) takes the clock.
+        record(&segment(0, &[2]));
+        let held = snapshot();
+        crate::clock::set_override(None);
+        let stamps: Vec<i64> = held.iter().map(|p| p.captured_at_ms).collect();
+        assert_eq!(stamps, vec![1_791_237_434_407, 1_791_237_434_500]);
         clear();
     }
 }

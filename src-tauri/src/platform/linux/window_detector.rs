@@ -31,11 +31,24 @@ pub fn find_aion2_window() -> bool {
     game_running()
 }
 
-/// Which window has focus is not knowable on Wayland and not wired up for X11
-/// yet. Report the game as focused, so auto-hide never hides the meter rather
-/// than hiding it all the time.
+/// Which window has focus, as KWin reports it (see `focus`). Elsewhere it is
+/// not knowable on Wayland and not wired up for X11, so the game is reported
+/// as focused: auto-hide then never hides the meter, rather than always.
 pub fn is_aion2_foreground() -> bool {
-    true
+    super::focus::game_or_meter_active().unwrap_or(true)
+}
+
+/// Start learning which window is active, where the desktop can say (KDE).
+/// `on_change` runs each time the game or the meter gains or loses the
+/// front.
+/// Be told when a screenshot tool (Spectacle) is in front, or no longer:
+/// the meter's windows let clicks through meanwhile (KDE).
+pub fn watch_screenshot_tool(on_change: impl Fn(bool) + Send + Sync + 'static) {
+    super::focus::watch_screenshot_tool(on_change);
+}
+
+pub fn watch_focus(on_change: impl Fn() + Send + Sync + 'static) -> Result<(), String> {
+    super::focus::watch(on_change)
 }
 
 /// Processes that mention "aion" in their name or first argument, for the log

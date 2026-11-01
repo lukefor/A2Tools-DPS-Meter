@@ -18,7 +18,13 @@ pkgdesc="A2Tools DPS Meter: real-time DPS overlay for AION 2 (Linux/Proton)"
 arch=('x86_64')
 url="https://github.com/taengu/A2Tools-DPS-Meter"
 license=('GPL-3.0-only')
-depends=('webkit2gtk-4.1' 'gtk3' 'libpcap' 'libcap' 'hicolor-icon-theme')
+# gst-plugins-base and -good: WebKitGTK plays sound (a plugin's alerts) through
+# GStreamer's audioconvert and autoaudiosink, which webkit2gtk-4.1 only lists as
+# optional; a bare Arch (the SteamOS distrobox) has neither, and stays silent.
+depends=('webkit2gtk-4.1' 'gtk3' 'libpcap' 'libcap' 'hicolor-icon-theme' 'gst-plugins-base' 'gst-plugins-good')
+# The tray icon is an AppIndicator; without the library the meter runs
+# without one (platform::window::tray_supported).
+optdepends=('libayatana-appindicator: tray icon')
 makedepends=('rust' 'nodejs' 'npm' 'git' 'pkgconf')
 install=a2tools-dps-meter.install
 options=('!lto' '!debug')
@@ -45,6 +51,12 @@ pkgver() {
 
 build() {
   cd "$(_root)"
+  # CI packs the binaries its .deb job built (A2T_PREBUILT=1, see
+  # .github/workflows/arch-package.yml) rather than compiling them again.
+  if [ -n "${A2T_PREBUILT:-}" ] && [ -f src-tauri/target/release/a2tools-dps-meter ] \
+     && [ -f src-tauri/target/release/a2tools-hotkeys ]; then
+    return 0
+  fi
   # Files a clean checkout lacks (they are gitignored mirrors of src/data).
   mkdir -p public/i18n public/data public/src/data
   cp -r src/data/i18n/* public/i18n/
@@ -52,12 +64,16 @@ build() {
   cp src/data/skill_icons.json src/data/dot_skill_ids.json public/src/data/
   npm ci
   npx tauri build --no-bundle
+  # The hotkeys helper, run without the meter's capture permission
+  # (platform/linux/hotkeys.rs); the .install script gives caps to the meter only.
+  cargo build --release --manifest-path src-tauri/Cargo.toml --bin a2tools-hotkeys
 }
 
 package() {
   local root
   root="$(_root)"
   install -Dm755 "$root/src-tauri/target/release/a2tools-dps-meter" "$pkgdir/usr/bin/a2tools-dps-meter"
+  install -Dm755 "$root/src-tauri/target/release/a2tools-hotkeys" "$pkgdir/usr/bin/a2tools-hotkeys"
 
   # Tauri resolves resources to /usr/lib/<name>; ship both spellings of the
   # name so either resolution finds the data.

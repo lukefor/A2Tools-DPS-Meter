@@ -6,9 +6,9 @@ Every package needs a 64-bit (x86_64) system with WebKitGTK 4.1: Ubuntu 22.04, D
 
 ## Contents
 
-[![Ubuntu](https://img.shields.io/badge/Ubuntu-E95420?logo=ubuntu&logoColor=white)](#ubuntu-debian-linux-mint-pop_os) [![Debian](https://img.shields.io/badge/Debian-A81D33?logo=debian&logoColor=white)](#ubuntu-debian-linux-mint-pop_os) [![Linux Mint](https://img.shields.io/badge/Linux_Mint-87CF3E?logo=linuxmint&logoColor=white)](#ubuntu-debian-linux-mint-pop_os) [![Pop!_OS](https://img.shields.io/badge/Pop%21__OS-48B9C7?logo=popos&logoColor=white)](#ubuntu-debian-linux-mint-pop_os) [![Fedora](https://img.shields.io/badge/Fedora-51A2DA?logo=fedora&logoColor=white)](#fedora) [![Bazzite](https://img.shields.io/badge/Bazzite-8A3FFC?logo=fedora&logoColor=white)](#bazzite-silverblue-kinoite-aurora-bluefin) [![Steam Deck](https://img.shields.io/badge/Steam_Deck-1A9FFF?logo=steamdeck&logoColor=white)](#steam-deck-steamos) [![openSUSE](https://img.shields.io/badge/openSUSE-73BA25?logo=opensuse&logoColor=white)](#opensuse) [![Arch](https://img.shields.io/badge/Arch-1793D1?logo=archlinux&logoColor=white)](#cachyos-arch-manjaro-endeavouros) [![CachyOS](https://img.shields.io/badge/CachyOS-08A88A?logo=cachyos&logoColor=white)](#cachyos-arch-manjaro-endeavouros) [![Manjaro](https://img.shields.io/badge/Manjaro-35BF5C?logo=manjaro&logoColor=white)](#cachyos-arch-manjaro-endeavouros) [![EndeavourOS](https://img.shields.io/badge/EndeavourOS-7F3FBF?logo=endeavouros&logoColor=white)](#cachyos-arch-manjaro-endeavouros)
+[![Ubuntu](https://img.shields.io/badge/Ubuntu-E95420?logo=ubuntu&logoColor=white)](#ubuntu-debian-linux-mint-pop_os) [![Debian](https://img.shields.io/badge/Debian-A81D33?logo=debian&logoColor=white)](#ubuntu-debian-linux-mint-pop_os) [![Linux Mint](https://img.shields.io/badge/Linux_Mint-87CF3E?logo=linuxmint&logoColor=white)](#ubuntu-debian-linux-mint-pop_os) [![Pop!_OS](https://img.shields.io/badge/Pop%21__OS-48B9C7?logo=popos&logoColor=white)](#ubuntu-debian-linux-mint-pop_os) [![Fedora](https://img.shields.io/badge/Fedora-51A2DA?logo=fedora&logoColor=white)](#fedora) [![Bazzite](https://img.shields.io/badge/Bazzite-8A3FFC?logo=fedora&logoColor=white)](#bazzite-silverblue-kinoite-aurora-bluefin) [![Steam Deck](https://img.shields.io/badge/Steam_Deck-1A9FFF?logo=steamdeck&logoColor=white)](#steam-deck-and-steam-machine-steamos) [![openSUSE](https://img.shields.io/badge/openSUSE-73BA25?logo=opensuse&logoColor=white)](#opensuse) [![Arch](https://img.shields.io/badge/Arch-1793D1?logo=archlinux&logoColor=white)](#cachyos-arch-manjaro-endeavouros) [![CachyOS](https://img.shields.io/badge/CachyOS-08A88A?logo=cachyos&logoColor=white)](#cachyos-arch-manjaro-endeavouros) [![Manjaro](https://img.shields.io/badge/Manjaro-35BF5C?logo=manjaro&logoColor=white)](#cachyos-arch-manjaro-endeavouros) [![EndeavourOS](https://img.shields.io/badge/EndeavourOS-7F3FBF?logo=endeavouros&logoColor=white)](#cachyos-arch-manjaro-endeavouros)
 
-- **[Install](#install):** [Ubuntu, Debian, Mint, Pop!_OS](#ubuntu-debian-linux-mint-pop_os) · [Fedora](#fedora) · [Bazzite and other image-based Fedoras](#bazzite-silverblue-kinoite-aurora-bluefin) · [Steam Deck (SteamOS)](#steam-deck-steamos) · [openSUSE](#opensuse) · [Arch, CachyOS, Manjaro, EndeavourOS](#cachyos-arch-manjaro-endeavouros)
+- **[Install](#install):** [Ubuntu, Debian, Mint, Pop!_OS](#ubuntu-debian-linux-mint-pop_os) · [Fedora](#fedora) · [Bazzite and other image-based Fedoras](#bazzite-silverblue-kinoite-aurora-bluefin) · [Steam Deck and Steam Machine (SteamOS)](#steam-deck-and-steam-machine-steamos) · [openSUSE](#opensuse) · [Arch, CachyOS, Manjaro, EndeavourOS](#cachyos-arch-manjaro-endeavouros)
 - **[Update](#update):** [how each install updates](#how-each-install-updates) · [the update prompt](#the-update-prompt) · [by hand](#update-by-hand) · [which version do I have?](#which-version-do-i-have)
 - **[Start and remove](#start-and-remove)**
 - **[What works on Linux](#what-works-on-linux)**
@@ -44,6 +44,8 @@ sudo curl -Lo /etc/yum.repos.d/a2tools.repo https://cdn.a2tools.app/linux/a2tool
 sudo dnf install a2-tools-dps-meter
 ```
 
+The repository and its packages are signed. dnf asks once whether to trust the A2Tools key; its fingerprint is `C955 98B7 90B4 DBE0 3F42 A314 50A5 2827 76C1 84DA`. If you added the repository before version 2.0.87, run the `curl` line again so your system checks the signatures too. This applies to the image-based Fedoras below as well.
+
 ### Bazzite, Silverblue, Kinoite, Aurora, Bluefin
 
 These image-based Fedoras keep the system read-only and add packages by layering them with `rpm-ostree`, which takes effect after a restart. Add the A2Tools repository, layer the meter, and restart:
@@ -62,7 +64,25 @@ systemctl reboot
 
 Updates then come with your system updates: Bazzite installs them on its own, or run `rpm-ostree upgrade` and restart. On a Steam Deck running Bazzite, use **Desktop Mode**: in Game Mode, nothing can draw over the game.
 
-### Steam Deck (SteamOS)
+#### Updating without a restart (advanced)
+
+`rpm-ostree` can also apply a meter update to the running system. Close the meter, then:
+
+```bash
+rpm-ostree upgrade
+```
+
+```bash
+sudo rpm-ostree apply-live --allow-replacement
+```
+
+Start the meter again and check the version with `rpm -q a2-tools-dps-meter`.
+
+- `rpm-ostree upgrade` also fetches any new Bazzite system image waiting at the time, and `apply-live` would then apply that system update live too, which is best avoided. If one is waiting (`rpm-ostree status` shows a new base image), restart once for it, and use this only when the meter alone has changed.
+- `--allow-replacement` is needed because the meter is already installed: without it, `apply-live` only adds new packages.
+- If anything misbehaves afterwards, including packet capture, a normal restart sets it right: the update is staged either way.
+
+### Steam Deck and Steam Machine (SteamOS)
 
 SteamOS replaces its read-only system with every update, so anything installed into it directly is wiped. Instead, the meter goes in a **distrobox**: a container with its own Arch Linux inside, which SteamOS 3.5 and later include. It must be created with `--root`: an ordinary (rootless) container cannot read the game's network traffic.
 
@@ -75,7 +95,24 @@ The overlay only works in **Desktop Mode**. In Game Mode, nothing can draw over 
     passwd
     ```
 
-3. Create the box:
+3. Keep the box on your home partition. SteamOS stores containers made with `--root` on a small system partition, which the box doesn't fit on ("insufficient space"). Point that storage at your home partition, once:
+
+    ```bash
+    sudo mkdir -p /home/.a2tools-containers
+    ```
+
+    ```bash
+    sudo tee /etc/containers/storage.conf <<'EOF'
+    [storage]
+    driver = "overlay"
+    graphroot = "/home/.a2tools-containers"
+    runroot = "/run/containers/storage"
+    EOF
+    ```
+
+    If an earlier attempt stopped with "insufficient space", clear what it left behind first: `sudo podman system reset --force`. SteamOS keeps this setting through its updates.
+
+4. Create the box:
 
     ```bash
     distrobox create --root --name a2tools --image archlinux:latest
@@ -83,7 +120,7 @@ The overlay only works in **Desktop Mode**. In Game Mode, nothing can draw over 
 
     The first time you enter it (the next step), it takes a few minutes to set up and asks you to choose a password for your user inside the box. Any password will do; sudo inside the box asks for it.
 
-4. Download the meter and install it inside the box:
+5. Download the meter and install it inside the box:
 
     ```bash
     curl -LO https://cdn.a2tools.app/linux/a2tools-dps-meter-latest-x86_64.pkg.tar.zst
@@ -97,13 +134,13 @@ The overlay only works in **Desktop Mode**. In Game Mode, nothing can draw over 
     distrobox enter --root a2tools -- sudo pacman -U --noconfirm ~/a2tools-dps-meter-latest-x86_64.pkg.tar.zst
     ```
 
-5. Start AION 2 from Steam, still in Desktop Mode, set to borderless or windowed. Then start the meter from Konsole:
+6. Start AION 2 from Steam, still in Desktop Mode, set to borderless or windowed. Then start the meter from Konsole:
 
     ```bash
     distrobox enter --root a2tools -- a2tools-dps-meter
     ```
 
-SteamOS updates leave the box alone, so the meter survives them. This route is new and not yet confirmed on a real Steam Deck: please tell us how it goes.
+SteamOS updates leave the box alone, so the meter survives them. This route is new and not yet confirmed on a real Steam Deck or Steam Machine: please tell us how it goes.
 
 ### openSUSE
 
@@ -184,7 +221,7 @@ distrobox enter --root a2tools -- pacman -Q a2tools-dps-meter
 
 ## Start and remove
 
-The meter is in your application menu, as A2Tools DPS Meter; on a Steam Deck, start it from Konsole as in [step 5](#steam-deck-steamos). To start it from a terminal with its output saved, which helps if you send us logs:
+The meter is in your application menu, as A2Tools DPS Meter; on a Steam Deck, start it from Konsole as in [step 6](#steam-deck-and-steam-machine-steamos). To start it from a terminal with its output saved, which helps if you send us logs:
 
 ```bash
 a2tools-dps-meter 2>&1 | tee ~/meter-console.log
@@ -211,11 +248,43 @@ To remove it:
 | A2 Tools account sign-in | Works: kept in KWallet or GNOME Keyring, which may ask to create or unlock a wallet the first time |
 | Automatic updates | Works for the packages; builds from source update with `git pull` |
 | Class icons | Works (missing in the 2.0.34 package and earlier; fixed in 2.0.35) |
-| Global hotkeys | Not yet |
+| Global hotkeys | From 2.0.59, once turned on in Settings → Keybinds, through your desktop's global shortcuts: see [Global hotkeys](#global-hotkeys) |
+| Meter anchor (Top, Centre, Bottom) | Settings → **Meter stays fixed at**. Offered on KDE Plasma Wayland and when the meter runs through XWayland (the default on GNOME). Not offered where it would do nothing: in an X11 session, and on native Wayland outside KDE. Until you choose, the meter grows as before: from its top edge through XWayland, from its centre on KDE Plasma Wayland |
 | Click-through lock | From 2.0.42, when the meter runs through XWayland (`GDK_BACKEND=x11 a2tools-dps-meter`): turn on the lock button in Settings. On native Wayland an app cannot see where the pointer is outside its own window, so the button stays hidden there |
 | Discord activity | From 2.0.42: your class, level and server in your Discord status, through the Discord app on the same computer |
 | Screenshots | Works from 2.0.41, to the clipboard and a folder (`~/Pictures/A2Tools DPS Meter` by default). On Linux the meter pictures itself on a plain background, since Wayland lets no app copy the screen |
 | Auto-hide when the game loses focus | Not yet (the meter stays visible) |
+
+## Global hotkeys
+
+From 2.0.59 the meter's three hotkeys (reset, show or hide, click-through lock) work on Linux through your desktop's global shortcuts. They are off until you turn on **Use keybinds** under **Settings → Keybinds**; turning it on registers them at once, and turning it off releases them. Wayland lets no app grab keys itself, so the meter asks the desktop for them, and the desktop has the final say on which keys they use. The meter suggests the keys set on the same tab.
+
+The keys are registered by a small helper, `a2tools-hotkeys`, installed next to the meter. The meter itself holds the permission to capture packets (`cap_net_raw`), and Linux will not let the desktop's shortcut service read a program holding a permission the service does not have, so the meter cannot register shortcuts itself. The helper has no such permission and only handles keybinds. They are off by default because your desktop may ask you to approve them.
+
+| Desktop | What happens |
+| --- | --- |
+| KDE Plasma 6 (Bazzite, Kinoite, Aurora) | On the first start, Plasma asks you to confirm the meter's shortcuts. Change them later in **System Settings → Keyboard → Shortcuts** |
+| GNOME 48 and later (Bluefin, Silverblue) | GNOME asks you to confirm the shortcuts on the first start; change them in **Settings → Keyboard → Keyboard Shortcuts** |
+| Hyprland | The meter binds its keys itself each time it starts, unless a key is already bound in your config. To bind them yourself instead, see below |
+| Other desktops | Works if the desktop's portal supports global shortcuts; otherwise there are no hotkeys |
+
+**Hyprland.** The meter's shortcuts are `com.a2tools.dps-meter:reset`, `:toggle` and `:lock`. `hyprctl globalshortcuts` lists them while the meter runs. The meter's own bindings last until Hyprland reloads its config, and come back when the meter starts again. To bind them in your config instead:
+
+```lua
+hl.bind("CTRL + ALT + R", hl.dsp.global("com.a2tools.dps-meter:reset"))
+hl.bind("CTRL + ALT + Up", hl.dsp.global("com.a2tools.dps-meter:toggle"))
+hl.bind("CTRL + ALT + L", hl.dsp.global("com.a2tools.dps-meter:lock"))
+```
+
+On an older Hyprland that uses `hyprland.conf`:
+
+```
+bind = CTRL ALT, R, global, com.a2tools.dps-meter:reset
+bind = CTRL ALT, Up, global, com.a2tools.dps-meter:toggle
+bind = CTRL ALT, L, global, com.a2tools.dps-meter:lock
+```
+
+A key the meter finds already bound is left to your binding, so give the meter's shortcuts keys of their own.
 
 ## GNOME: keep the meter above other windows
 
@@ -233,7 +302,7 @@ Depending on GNOME's fractional-scaling configuration, XWayland text may look so
 GDK_BACKEND=wayland a2tools-dps-meter
 ```
 
-If XWayland is unavailable, the meter also falls back to native Wayland. GTK's native Wayland keep-above request has no effect in GNOME: focus the meter, press **Alt+Space**, and select **Always on Top**. Repeat for Details or other meter windows as needed. Close the focused window with **Alt+F4**, or use **Settings > Quit** to exit the meter.
+If XWayland is unavailable, the meter also falls back to native Wayland. GTK's native Wayland keep-above request has no effect in GNOME: focus the meter, press **Alt+Space**, and select **Always on Top**. Repeat for Details or other meter windows as needed. Close the focused window with **Alt+F4**; on the meter itself this exits the meter, as **Settings > Quit** does.
 
 ### Resizing on GNOME
 
@@ -281,7 +350,7 @@ Arch, Manjaro, EndeavourOS (if you would rather build than use the package):
 sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg libpcap git
 ```
 
-**Steam Deck:** no need to build: follow the [Steam Deck instructions](#steam-deck-steamos).
+**Steam Deck and Steam Machine:** no need to build: follow the [SteamOS instructions](#steam-deck-and-steam-machine-steamos).
 
 ### 2. Download and build the meter
 
@@ -399,7 +468,7 @@ That is Hyprland's Lua configuration. If you use `hyprland.conf` instead, set th
 | `debug.log` says `No AION2 window found` while the game is running | The meter did not find the game process. Send us the output of `ps aux \| grep -i aion` along with your logs. |
 | `debug.log` says `Not locked yet` with `0 with game markers` while you fight | Capture sees traffic but not the game's. Tell us if you use a VPN or ping reducer. |
 | The window never opens, and the terminal says `Error 71 (Protocol error) dispatching to Wayland display`; or the window is blank or white | WebKit handed its frames to the compositor as GPU buffers, which some setups reject (NVIDIA drivers especially). The meter now has WebKit hand them over in shared memory instead (`WEBKIT_DMABUF_RENDERER_FORCE_SHM=1`). Remove `WEBKIT_DISABLE_DMABUF_RENDERER=1` if you added it to a launcher: on WebKitGTK 2.54 it leaves the window mostly blank. If the window is still wrong, try `GDK_BACKEND=x11 a2tools-dps-meter`, which runs it through XWayland, and tell us. |
-| The meter goes behind the game | Run the game borderless or windowed. On GNOME, see [automatic pinning through XWayland and the native Wayland workaround](#gnome-keep-the-meter-above-other-windows). On Wayland an app cannot force itself on top of a fullscreen game. On KDE Plasma, KWin can count a borderless game as fullscreen anyway: add a window rule for the meter (System Settings → Window Management → Window Rules) with **Layer** set to **Overlay**, forced. Thanks to Seralth for this. |
+| The meter goes behind the game | Run the game borderless or windowed. On GNOME, see [automatic pinning through XWayland and the native Wayland workaround](#gnome-keep-the-meter-above-other-windows). On Wayland an app cannot force itself on top of a fullscreen game. On KDE Plasma, KWin can count a borderless game as fullscreen anyway. From 2.0.54 the meter adds a window rule for itself the first time it starts on KDE (**Layer** forced to **Overlay**, listed in System Settings → Window Management → Window Rules as "A2Tools DPS Meter above fullscreen games"); restart the meter once if it is still behind. On older versions, or if you removed that rule, add it yourself: a rule for window class `a2tools-dps-meter` with **Layer** set to **Overlay**, forced. Thanks to Seralth for this. |
 | After a WebKitGTK update the meter's window draws only in pieces, or only while you hover or drag it | WebKitGTK 2.54 no longer draws the transparent overlay fully without its DMA-BUF renderer, which older versions of the meter turned off. Update the meter, or start an older version with `WEBKIT_DISABLE_DMABUF_RENDERER=0 WEBKIT_DMABUF_RENDERER_FORCE_SHM=1 a2tools-dps-meter`. |
 | On a tiling desktop the meter is tiled beside the game, or its tooltips appear in the wrong place | See [Tiling desktops](#tiling-desktops-hyprland-sway-i3). |
 

@@ -14,6 +14,8 @@ export default defineConfig(async () => ({
       const dataDir = join(config.publicDir, "data");
       mkdirSync(dataDir, { recursive: true });
       copyFileSync(join(config.root, "src/data/skill_icons.json"), join(dataDir, "skill_icons.json"));
+      // Buff icons for Details (read when its Buffs section first opens).
+      copyFileSync(join(config.root, "src/data/abnormals.json"), join(dataDir, "abnormals.json"));
       cpSync(join(config.root, "src/data/i18n"), join(config.publicDir, "i18n"), { recursive: true });
     },
   }],

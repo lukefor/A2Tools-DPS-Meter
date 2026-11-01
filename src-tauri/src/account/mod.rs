@@ -23,6 +23,7 @@
 //!
 //! The token is a bearer credential and is stored encrypted — see [`secret`].
 
+pub mod guest;
 pub mod secret;
 
 use std::path::Path;
@@ -309,11 +310,17 @@ pub async fn whoami(client: &reqwest::Client, app_data_dir: &Path) -> AccountSta
 }
 
 /// A name for this install, so the approval page says what is being approved.
+/// How a meter names itself to a2tools.app (an account's list of devices, a
+/// guest): by its system only. It said the PC's name, which can be a
+/// person's name, and the site doesn't need it (security audit L6).
 pub fn device_label() -> String {
-    let host = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "PC".into());
-    format!("A2Tools Meter on {host}")
+    let system = match std::env::consts::OS {
+        "windows" => "Windows",
+        "linux" => "Linux",
+        "macos" => "macOS",
+        other => other,
+    };
+    format!("A2Tools Meter on {system}")
 }
 
 #[cfg(test)]
