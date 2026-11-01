@@ -2861,7 +2861,6 @@ class DpsApp {
     this.windowOpacityValue = document.querySelector(".windowOpacityValue");
     this.titleOpacityInput = document.querySelector(".titleOpacityInput");
     this.titleOpacityValue = document.querySelector(".titleOpacityValue");
-    this.discordButton = document.querySelector(".discordButton");
     this.supportWidget = document.querySelector(".supportWidget");
     this.supportButton = document.querySelector(".supportButton");
     this.supportModal = document.querySelector("#supportModal");
@@ -3634,9 +3633,6 @@ class DpsApp {
       this.resetAllSettings();
     });
 
-    this.discordButton?.addEventListener("click", () => {
-      window.javaBridge?.openBrowser?.("https://discord.gg/Aion2Global");
-    });
 
     this.supportButton?.addEventListener("click", () => {
       this.openSupportModal();

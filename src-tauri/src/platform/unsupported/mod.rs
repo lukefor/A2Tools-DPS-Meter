@@ -7,6 +7,7 @@ pub mod admin;
 pub mod atomic_file;
 pub mod clock;
 pub mod dialog;
+#[cfg(feature = "online")]
 pub mod discord_ipc;
 pub mod fps;
 pub mod hotkeys;

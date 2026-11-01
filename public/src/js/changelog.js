@@ -9,7 +9,7 @@
 (() => {
   const RELEASES_URL = "https://github.com/taengu/A2Tools-DPS-Meter/releases";
   // Links in the notes open only to these.
-  const LINK_HOSTS = ["github.com", "a2tools.app", "discord.gg"];
+  const LINK_HOSTS = ["github.com", "a2tools.app"];
 
   const section = document.querySelector("#settingsSection-changelog");
   if (!section) return;

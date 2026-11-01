@@ -40,8 +40,10 @@ pub mod procfs;
 pub mod screenshot;
 
 pub use os::{
-    admin, clock, dialog, discord_ipc, fps, process, secret, shell, updater, window, window_detector, window_rules, window_startup,
+    admin, clock, dialog, fps, process, secret, shell, updater, window, window_detector, window_rules, window_startup,
 };
+#[cfg(feature = "online")]
+pub use os::discord_ipc;
 
 pub use os::atomic_file;
 

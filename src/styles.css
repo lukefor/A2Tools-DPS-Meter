@@ -2653,9 +2653,8 @@ body.mainPlayerNamesBold .settingsPanel .themeDropdownMenu .settingsDropdownItem
   cursor: pointer;
 }
 
-/* One geometry for the three outbound links; only the fill tells them
+/* One geometry for the outbound links; only the fill tells them
    apart, and none of them is louder than the panel it sits in. */
-.settingsPanel .discordButton,
 .settingsPanel .supportButton,
 .settingsPanel .a2toolsButton,
 .settingsPanel .quitButton {
@@ -2676,9 +2675,6 @@ body.mainPlayerNamesBold .settingsPanel .themeDropdownMenu .settingsDropdownItem
   cursor: pointer;
   transition: filter 120ms ease, background 120ms ease, border-color 120ms ease;
 }
-.settingsPanel .discordButton {
-  background: #5865f2;
-}
 .settingsPanel .supportButton {
   background: linear-gradient(90deg, #7f5fe8, #6f4cd8);
 }
@@ -2687,23 +2683,16 @@ body.mainPlayerNamesBold .settingsPanel .themeDropdownMenu .settingsDropdownItem
   background-size: 300% 300%;
   animation: a2toolsShimmer 6s ease infinite;
 }
-.settingsPanel .discordButton:hover,
 .settingsPanel .supportButton:hover,
 .settingsPanel .a2toolsButton:hover {
   filter: brightness(1.12);
 }
-.settingsPanel .discordButton .discordIcon,
 .settingsPanel .supportButton .supportIcon {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
   width: 15px;
   height: 15px;
-}
-.settingsPanel .discordButton .discordIcon svg {
-  width: 100%;
-  height: 100%;
-  fill: currentColor;
 }
 .settingsPanel .supportButton .supportIcon svg {
   width: 100%;

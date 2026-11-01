@@ -22,7 +22,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 #   cargo check --no-default-features --target wasm32-unknown-unknown
 #
 # is the check that enforces it.
-default = ["desktop", "online"]
+# This fork builds the private (offline) meter by default: nothing in it
+# talks to a service outside this computer (see `online` below). Add
+# `--features online` to a build to put that back.
+default = ["desktop"]
 # Never shipped: the updater reads its manifest from test/ on the CDN, to try
 # a release's update path on an installed build (signed and checked as ever).
 update-test = ["online"]
